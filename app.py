@@ -4,167 +4,38 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-# ==========================================================
-# Streamlit page setup
-# ==========================================================
 st.set_page_config(page_title="MyClimate Dashboard", page_icon="📊", layout="wide")
 
-# Keep the original Excel workbook in the same folder as this app.
-# When the workbook is updated, replace the file but keep the same filename.
-EXCEL_FILE = Path(__file__).parent / "MyClimate Methodology Workbook_final (1).xlsx"
+# -------------------------------------------------------------------
+# Workbook source
+# -------------------------------------------------------------------
+# Put your current workbook in the same folder as this app.
+# The app tries these names in order so you can keep either filename.
+WORKBOOK_CANDIDATES = [
+    "MyClimate Methodology Workbook_final_updated_department_blankJ.xlsx",
+    "MyClimate Methodology Workbook_final_updated_department.xlsx",
+    "MyClimate Methodology Workbook_final (1).xlsx",
+]
+
+EXCEL_FILE = None
+for candidate in WORKBOOK_CANDIDATES:
+    candidate_path = Path(__file__).parent / candidate
+    if candidate_path.exists():
+        EXCEL_FILE = candidate_path
+        break
 
 ALL_DATA_SHEET = "All Integrated Data"
 FTE_SHEET = "FTE Data"
 DASHBOARD_SHEET = "Dashboard"
 
-# Required columns from All Integrated Data.
-BASE_COLUMNS = [
-    "Date",
-    "Year",
-    "DepartureAirport",
-    "ArrivalAirport",
-    "Class",
-    "Distance_km",
-    "Final_RFI3_tCO2e",
-    "Include_Final",
-]
 
-# Optional granularity columns.
-# If these columns are added to All Integrated Data, the dashboard will automatically use them.
-OPTIONAL_DIMENSIONS = [
-    "Team",
-    "Equipe",
-    "Équipe",
-    "Project",
-    "Projet",
-    "Hub",
-    "Location",
-    "Site",
-    "Programme",
-    "Program",
-    "Department",
-    "Unit",
-    "Cost_Center",
-    "Cost Center",
-    "Travel_Purpose",
-    "Travel Purpose",
-    "Funding_Source",
-    "Funding Source",
-]
-
-# Nice display names for common dimensions.
-DISPLAY_NAMES = {
-    "Team": "Team",
-    "Equipe": "Équipe",
-    "Équipe": "Équipe",
-    "Project": "Project",
-    "Projet": "Projet",
-    "Hub": "Hub",
-    "Location": "Location",
-    "Site": "Site",
-    "Programme": "Programme",
-    "Program": "Program",
-    "Department": "Department",
-    "Unit": "Unit",
-    "Cost_Center": "Cost center",
-    "Cost Center": "Cost center",
-    "Travel_Purpose": "Travel purpose",
-    "Travel Purpose": "Travel purpose",
-    "Funding_Source": "Funding source",
-    "Funding Source": "Funding source",
-}
-
-
-def label(col_name: str) -> str:
-    """Clean label for display."""
-    return DISPLAY_NAMES.get(col_name, col_name.replace("_", " "))
-
-
-@st.cache_data(show_spinner="Reading Excel workbook...")
-def load_from_excel(file_mtime: float):
-    """Read the original workbook and keep only dashboard-relevant fields in memory."""
-    all_data = pd.read_excel(EXCEL_FILE, sheet_name=ALL_DATA_SHEET, engine="openpyxl")
-    fte = pd.read_excel(EXCEL_FILE, sheet_name=FTE_SHEET, engine="openpyxl")
-
-    # Read dashboard defaults where possible.
-    try:
-        dash = pd.read_excel(EXCEL_FILE, sheet_name=DASHBOARD_SHEET, header=None, engine="openpyxl")
-        default_year = int(dash.iloc[7, 1]) if pd.notna(dash.iloc[7, 1]) else None
-        rfi_factor = dash.iloc[9, 1] if pd.notna(dash.iloc[9, 1]) else 3
-    except Exception:
-        default_year = None
-        rfi_factor = 3
-
-    missing = [col for col in BASE_COLUMNS if col not in all_data.columns]
-    if missing:
-        raise ValueError(f"Missing expected columns in '{ALL_DATA_SHEET}': {missing}")
-
-    available_dimensions = [col for col in OPTIONAL_DIMENSIONS if col in all_data.columns]
-
-    flights = all_data[BASE_COLUMNS + available_dimensions].copy()
-
-    # Use only final integrated records, excluding duplicate copies according to workbook logic.
-    flights = flights[flights["Include_Final"].astype(str).str.strip().str.lower().eq("yes")].copy()
-
-    # Clean core fields.
-    flights["Date"] = pd.to_datetime(flights["Date"], errors="coerce")
-    flights["Year"] = pd.to_numeric(flights["Year"], errors="coerce")
-    flights = flights.dropna(subset=["Year"])
-    flights["Year"] = flights["Year"].astype(int)
-
-    flights["DepartureAirport"] = flights["DepartureAirport"].fillna("UNK").astype(str).str.upper().str.strip()
-    flights["ArrivalAirport"] = flights["ArrivalAirport"].fillna("UNK").astype(str).str.upper().str.strip()
-    flights["Route"] = flights["DepartureAirport"] + " → " + flights["ArrivalAirport"]
-
-    flights["Class"] = flights["Class"].fillna("Unknown").astype(str).str.lower().str.strip()
-    flights["Distance_km"] = pd.to_numeric(flights["Distance_km"], errors="coerce").fillna(0)
-    flights["Emissions_tCO2e"] = pd.to_numeric(flights["Final_RFI3_tCO2e"], errors="coerce").fillna(0)
-
-    flights["Month"] = flights["Date"].dt.month
-    flights["Month_name"] = flights["Date"].dt.strftime("%b")
-
-    # Clean optional dimensions.
-    for dim in available_dimensions:
-        flights[dim] = flights[dim].fillna("Unassigned").astype(str).str.strip()
-        flights.loc[flights[dim].eq(""), dim] = "Unassigned"
-
-    # Keep only relevant fields in Python after reading from the full original workbook.
-    keep_cols = [
-        "Date",
-        "Year",
-        "DepartureAirport",
-        "ArrivalAirport",
-        "Route",
-        "Class",
-        "Distance_km",
-        "Emissions_tCO2e",
-        "Month",
-        "Month_name",
-    ] + available_dimensions
-    flights = flights[keep_cols]
-
-    fte = fte[["Year", "Employees", "FTE"]].copy()
-    fte["Year"] = pd.to_numeric(fte["Year"], errors="coerce")
-    fte = fte.dropna(subset=["Year"])
-    fte["Year"] = fte["Year"].astype(int)
-    fte["FTE"] = pd.to_numeric(fte["FTE"], errors="coerce")
-    fte["Employees"] = pd.to_numeric(fte["Employees"], errors="coerce")
-
-    return flights, fte, default_year, rfi_factor, available_dimensions
-
-
-def make_annual_summary(data: pd.DataFrame, fte_data: pd.DataFrame) -> pd.DataFrame:
-    annual = (
-        data.groupby("Year", as_index=False)
-        .agg(
-            Flights=("Emissions_tCO2e", "size"),
-            Emissions_tCO2e=("Emissions_tCO2e", "sum"),
-            Distance_km=("Distance_km", "sum"),
-        )
-        .merge(fte_data[["Year", "FTE"]], on="Year", how="left")
-    )
-    annual["Relative_tCO2e_per_FTE"] = annual["Emissions_tCO2e"] / annual["FTE"]
-    return annual.sort_values("Year")
+# -------------------------------------------------------------------
+# Helpers
+# -------------------------------------------------------------------
+def clean_text(series: pd.Series, blank_label: str = "Unassigned") -> pd.Series:
+    cleaned = series.fillna("").astype(str).str.strip()
+    cleaned = cleaned.replace({"0": "", "0.0": "", "nan": "", "None": ""})
+    return cleaned.mask(cleaned.eq(""), blank_label)
 
 
 def format_annual_table(annual: pd.DataFrame) -> pd.DataFrame:
@@ -189,15 +60,106 @@ def annual_table_config():
     }
 
 
-# ==========================================================
-# Load data
-# ==========================================================
-if not EXCEL_FILE.exists():
-    st.error(f"Excel workbook not found: {EXCEL_FILE.name}")
+@st.cache_data(show_spinner="Reading Excel workbook...")
+def load_data(file_mtime: float):
+    all_data = pd.read_excel(EXCEL_FILE, sheet_name=ALL_DATA_SHEET, engine="openpyxl")
+    fte = pd.read_excel(EXCEL_FILE, sheet_name=FTE_SHEET, engine="openpyxl")
+
+    # Support both old and new workbook headers.
+    cabin_col = "Cabin Class" if "Cabin Class" in all_data.columns else "Class"
+    hub_col = "Traveler Department" if "Traveler Department" in all_data.columns else None
+
+    required = [
+        "Date",
+        "Year",
+        "DepartureAirport",
+        "ArrivalAirport",
+        cabin_col,
+        "Distance_km",
+        "Final_RFI3_tCO2e",
+        "Include_Final",
+    ]
+    missing = [col for col in required if col not in all_data.columns]
+    if missing:
+        raise ValueError(f"Missing expected columns in '{ALL_DATA_SHEET}': {missing}")
+
+    keep = required + ([hub_col] if hub_col else [])
+    flights = all_data[keep].copy()
+    flights = flights[flights["Include_Final"].astype(str).str.strip().str.lower().eq("yes")].copy()
+
+    flights["Date"] = pd.to_datetime(flights["Date"], errors="coerce")
+    flights["Year"] = pd.to_numeric(flights["Year"], errors="coerce")
+    flights = flights.dropna(subset=["Year"])
+    flights["Year"] = flights["Year"].astype(int)
+
+    flights["DepartureAirport"] = clean_text(flights["DepartureAirport"], "UNK").str.upper()
+    flights["ArrivalAirport"] = clean_text(flights["ArrivalAirport"], "UNK").str.upper()
+    flights["Route"] = flights["DepartureAirport"] + " → " + flights["ArrivalAirport"]
+
+    flights["Cabin Class"] = clean_text(flights[cabin_col], "Unknown").str.lower()
+    flights["Hubs"] = clean_text(flights[hub_col], "Unassigned") if hub_col else "Unassigned"
+    flights["Distance_km"] = pd.to_numeric(flights["Distance_km"], errors="coerce").fillna(0)
+    flights["Emissions_tCO2e"] = pd.to_numeric(flights["Final_RFI3_tCO2e"], errors="coerce").fillna(0)
+    flights["Month"] = flights["Date"].dt.month
+    flights["Month_name"] = flights["Date"].dt.strftime("%b")
+
+    flights = flights[
+        [
+            "Date",
+            "Year",
+            "DepartureAirport",
+            "ArrivalAirport",
+            "Route",
+            "Cabin Class",
+            "Hubs",
+            "Distance_km",
+            "Emissions_tCO2e",
+            "Month",
+            "Month_name",
+        ]
+    ]
+
+    fte = fte[["Year", "Employees", "FTE"]].copy()
+    fte["Year"] = pd.to_numeric(fte["Year"], errors="coerce")
+    fte = fte.dropna(subset=["Year"])
+    fte["Year"] = fte["Year"].astype(int)
+    fte["Employees"] = pd.to_numeric(fte["Employees"], errors="coerce")
+    fte["FTE"] = pd.to_numeric(fte["FTE"], errors="coerce")
+
+    try:
+        dash = pd.read_excel(EXCEL_FILE, sheet_name=DASHBOARD_SHEET, header=None, engine="openpyxl")
+        default_year = int(dash.iloc[7, 1]) if pd.notna(dash.iloc[7, 1]) else None
+        rfi_factor = dash.iloc[9, 1] if pd.notna(dash.iloc[9, 1]) else 3
+    except Exception:
+        default_year = None
+        rfi_factor = 3
+
+    return flights, fte, default_year, rfi_factor
+
+
+def make_annual_summary(data: pd.DataFrame, fte_data: pd.DataFrame) -> pd.DataFrame:
+    annual = (
+        data.groupby("Year", as_index=False)
+        .agg(
+            Flights=("Emissions_tCO2e", "size"),
+            Emissions_tCO2e=("Emissions_tCO2e", "sum"),
+            Distance_km=("Distance_km", "sum"),
+        )
+        .merge(fte_data[["Year", "FTE"]], on="Year", how="left")
+    )
+    annual["Relative_tCO2e_per_FTE"] = annual["Emissions_tCO2e"] / annual["FTE"]
+    return annual.sort_values("Year")
+
+
+# -------------------------------------------------------------------
+# Load workbook
+# -------------------------------------------------------------------
+if EXCEL_FILE is None:
+    st.error("No Excel workbook found in the app folder. Add the updated workbook next to app.py.")
     st.stop()
 
 try:
-    flights, fte, workbook_default_year, rfi_factor, available_dimensions = load_from_excel(EXCEL_FILE.stat().st_mtime)
+    flights, fte, workbook_default_year, rfi_factor = load_data(EXCEL_FILE.stat().st_mtime)
 except Exception as exc:
     st.error("The dashboard could not read the Excel workbook.")
     st.exception(exc)
@@ -208,103 +170,73 @@ if not available_years:
     st.warning("No valid flight records found after applying Include_Final = Yes.")
     st.stop()
 
-# ==========================================================
-# Header
-# ==========================================================
+# -------------------------------------------------------------------
+# Header and controls
+# -------------------------------------------------------------------
 st.title("📊 MyClimate Flight Emissions Dashboard")
-st.caption(
-    "The dashboard reads directly from the original Excel workbook. "
-    "The Python app keeps only the fields needed for the dashboard after loading the workbook."
-)
+st.caption("Reads from the original Excel workflow. Traveler Department is shown as **Hubs** in this dashboard.")
 
-# ==========================================================
-# Sidebar controls
-# ==========================================================
 default_year = workbook_default_year if workbook_default_year in available_years else max(available_years)
 
 with st.sidebar:
     st.header("Controls")
-
-    selected_year = st.selectbox(
-        "Analysis year",
-        available_years,
-        index=available_years.index(default_year),
-    )
-
-    baseline_defaults = [y for y in [2023, 2024] if y in available_years]
+    selected_year = st.selectbox("Analysis year", available_years, index=available_years.index(default_year))
     baseline_years = st.multiselect(
         "Baseline years",
         available_years,
-        default=baseline_defaults,
+        default=[y for y in [2023, 2024] if y in available_years],
     )
 
     st.divider()
-    st.subheader("Granularity filters")
+    st.subheader("Dashboard filters")
 
-    dimension_filters = {}
-    if available_dimensions:
-        for dim in available_dimensions:
-            values = sorted(flights[dim].dropna().unique().tolist())
-            selected_values = st.multiselect(
-                f"Filter by {label(dim)}",
-                values,
-                default=values,
-            )
-            dimension_filters[dim] = selected_values
-    else:
-        st.info("No Team / Project / Hub columns found yet in All Integrated Data.")
+    cabin_values = sorted(flights["Cabin Class"].dropna().unique().tolist())
+    selected_cabins = st.multiselect("Cabin class", cabin_values, default=cabin_values)
+
+    hub_values = sorted(flights["Hubs"].dropna().unique().tolist())
+    selected_hubs = st.multiselect("Hubs", hub_values, default=hub_values)
 
     st.divider()
     st.caption(f"Workbook: `{EXCEL_FILE.name}`")
     st.caption(f"RFI factor from workbook controls: {rfi_factor}")
-
     if st.button("Clear cache and reload workbook"):
         st.cache_data.clear()
         st.rerun()
 
-# ==========================================================
-# Filter data
-# ==========================================================
-filtered_all_years = flights.copy()
-for dim, selected_values in dimension_filters.items():
-    filtered_all_years = filtered_all_years[filtered_all_years[dim].isin(selected_values)]
-
+filtered_all_years = flights[
+    flights["Cabin Class"].isin(selected_cabins) & flights["Hubs"].isin(selected_hubs)
+].copy()
 selected = filtered_all_years[filtered_all_years["Year"] == selected_year].copy()
 baseline = filtered_all_years[filtered_all_years["Year"].isin(baseline_years)].copy() if baseline_years else filtered_all_years.iloc[0:0].copy()
 annual = make_annual_summary(filtered_all_years, fte)
 
-# ==========================================================
+# -------------------------------------------------------------------
 # KPIs
-# ==========================================================
+# -------------------------------------------------------------------
 selected_fte_series = annual.loc[annual["Year"] == selected_year, "FTE"]
 selected_fte = float(selected_fte_series.iloc[0]) if len(selected_fte_series) and pd.notna(selected_fte_series.iloc[0]) else None
 selected_emissions = selected["Emissions_tCO2e"].sum()
 selected_flights = len(selected)
 selected_distance = selected["Distance_km"].sum()
 selected_relative = selected_emissions / selected_fte if selected_fte and selected_fte != 0 else None
-
 baseline_abs = baseline.groupby("Year")["Emissions_tCO2e"].sum().mean() if len(baseline) else None
-baseline_fte = fte[fte["Year"].isin(baseline_years)]["FTE"].mean() if baseline_years else None
-baseline_rel = baseline_abs / baseline_fte if baseline_abs and baseline_fte and baseline_fte != 0 else None
 
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("Flights", f"{selected_flights:,.0f}")
-col2.metric("Emissions", f"{selected_emissions:,.1f} tCO₂e")
-col3.metric("Distance", f"{selected_distance:,.0f} km")
-col4.metric("Relative emissions", "n/a" if selected_relative is None else f"{selected_relative:,.2f} tCO₂e/FTE")
-
+k1, k2, k3, k4 = st.columns(4)
+k1.metric("Flights", f"{selected_flights:,.0f}")
+k2.metric("Emissions", f"{selected_emissions:,.1f} tCO₂e")
+k3.metric("Distance", f"{selected_distance:,.0f} km")
+k4.metric("Relative emissions", "n/a" if selected_relative is None else f"{selected_relative:,.2f} tCO₂e/FTE")
 if baseline_abs is not None:
-    st.caption(
-        f"Baseline absolute emissions: {baseline_abs:,.1f} tCO₂e. "
-        + (f"Baseline relative emissions: {baseline_rel:,.2f} tCO₂e/FTE." if baseline_rel is not None else "")
-    )
+    st.caption(f"Baseline absolute emissions: {baseline_abs:,.1f} tCO₂e based on {', '.join(map(str, baseline_years))}.")
 
 st.divider()
 
-# ==========================================================
-# Main chart row
-# ==========================================================
-left, right = st.columns((1.15, 1))
+# -------------------------------------------------------------------
+# Dashboard chart analysis
+# -------------------------------------------------------------------
+st.subheader("Dashboard chart analysis")
+
+left, middle, right = st.columns((1.2, 1, 1))
 
 with left:
     monthly = (
@@ -321,29 +253,73 @@ with left:
         title=f"Emissions over time ({selected_year})",
         labels={"Month_name": "Month", "Emissions_tCO2e": "Emissions (tCO₂e)"},
     )
-    fig_month.update_layout(height=420, margin=dict(l=20, r=20, t=60, b=20))
+    fig_month.update_layout(height=400, margin=dict(l=20, r=20, t=60, b=20))
     st.plotly_chart(fig_month, use_container_width=True)
 
-with right:
-    by_class = (
-        selected.groupby("Class", as_index=False)["Emissions_tCO2e"]
-        .sum()
+with middle:
+    by_cabin = (
+        selected.groupby("Cabin Class", as_index=False)
+        .agg(Flights=("Emissions_tCO2e", "size"), Emissions_tCO2e=("Emissions_tCO2e", "sum"))
         .sort_values("Emissions_tCO2e", ascending=False)
     )
-    fig_class = px.bar(
-        by_class,
-        x="Class",
+    fig_cabin = px.bar(
+        by_cabin,
+        x="Cabin Class",
         y="Emissions_tCO2e",
+        text_auto=".1f",
         title=f"Emissions by cabin class ({selected_year})",
-        labels={"Class": "Class", "Emissions_tCO2e": "Emissions (tCO₂e)"},
+        labels={"Cabin Class": "Cabin class", "Emissions_tCO2e": "Emissions (tCO₂e)"},
     )
-    fig_class.update_layout(height=420, margin=dict(l=20, r=20, t=60, b=20))
-    st.plotly_chart(fig_class, use_container_width=True)
+    fig_cabin.update_layout(height=400, margin=dict(l=20, r=20, t=60, b=70), xaxis_tickangle=-25)
+    st.plotly_chart(fig_cabin, use_container_width=True)
 
-# ==========================================================
-# Annual chart and summary table
-# ==========================================================
-left2, right2 = st.columns((1.15, 1))
+with right:
+    by_hub = (
+        selected.groupby("Hubs", as_index=False)
+        .agg(Flights=("Emissions_tCO2e", "size"), Emissions_tCO2e=("Emissions_tCO2e", "sum"))
+        .sort_values("Emissions_tCO2e", ascending=False)
+        .head(12)
+    )
+    fig_hub = px.bar(
+        by_hub,
+        x="Hubs",
+        y="Emissions_tCO2e",
+        text_auto=".1f",
+        title=f"Emissions by hubs ({selected_year})",
+        labels={"Hubs": "Hubs", "Emissions_tCO2e": "Emissions (tCO₂e)"},
+    )
+    fig_hub.update_layout(height=400, margin=dict(l=20, r=20, t=60, b=90), xaxis_tickangle=-35)
+    st.plotly_chart(fig_hub, use_container_width=True)
+
+# Cabin class by hub stacked chart.
+hub_cabin = (
+    selected.groupby(["Hubs", "Cabin Class"], as_index=False)
+    .agg(Flights=("Emissions_tCO2e", "size"), Emissions_tCO2e=("Emissions_tCO2e", "sum"))
+)
+top_hubs = (
+    hub_cabin.groupby("Hubs", as_index=False)["Emissions_tCO2e"]
+    .sum()
+    .sort_values("Emissions_tCO2e", ascending=False)
+    .head(12)["Hubs"]
+    .tolist()
+)
+hub_cabin_top = hub_cabin[hub_cabin["Hubs"].isin(top_hubs)]
+
+fig_stack = px.bar(
+    hub_cabin_top,
+    x="Hubs",
+    y="Emissions_tCO2e",
+    color="Cabin Class",
+    title=f"Cabin class contribution within hubs ({selected_year})",
+    labels={"Hubs": "Hubs", "Emissions_tCO2e": "Emissions (tCO₂e)", "Cabin Class": "Cabin class"},
+)
+fig_stack.update_layout(height=460, margin=dict(l=20, r=20, t=60, b=100), xaxis_tickangle=-35)
+st.plotly_chart(fig_stack, use_container_width=True)
+
+# -------------------------------------------------------------------
+# Annual chart and annual table
+# -------------------------------------------------------------------
+left2, right2 = st.columns((1.1, 1))
 
 with left2:
     fig_annual = px.bar(
@@ -366,123 +342,48 @@ with left2:
 
 with right2:
     st.subheader("Annual summary table")
-    annual_display = format_annual_table(annual)
     st.dataframe(
-        annual_display,
+        format_annual_table(annual),
         use_container_width=True,
         hide_index=True,
         column_config=annual_table_config(),
     )
 
-# ==========================================================
-# Granularity section
-# ==========================================================
+# -------------------------------------------------------------------
+# Tables
+# -------------------------------------------------------------------
 st.divider()
-st.subheader("Granularity: by team, project, hub, etc.")
+st.subheader("Detailed summaries")
 
-if available_dimensions:
-    selected_dimension = st.selectbox(
-        "Group emissions by",
-        available_dimensions,
-        format_func=label,
+tab_routes, tab_hubs, tab_cabin = st.tabs(["Top routes", "Hubs summary", "Cabin class summary"])
+
+with tab_routes:
+    top_routes = (
+        selected.groupby("Route", as_index=False)
+        .agg(Flights=("Emissions_tCO2e", "size"), Emissions_tCO2e=("Emissions_tCO2e", "sum"), Distance_km=("Distance_km", "sum"))
+        .sort_values("Emissions_tCO2e", ascending=False)
+        .head(20)
     )
+    st.dataframe(top_routes.round({"Emissions_tCO2e": 2, "Distance_km": 0}), use_container_width=True, hide_index=True)
 
-    by_dimension = (
-        selected.groupby(selected_dimension, as_index=False)
-        .agg(
-            Flights=("Emissions_tCO2e", "size"),
-            Emissions_tCO2e=("Emissions_tCO2e", "sum"),
-            Distance_km=("Distance_km", "sum"),
-        )
+with tab_hubs:
+    hubs_summary = (
+        selected.groupby("Hubs", as_index=False)
+        .agg(Flights=("Emissions_tCO2e", "size"), Emissions_tCO2e=("Emissions_tCO2e", "sum"), Distance_km=("Distance_km", "sum"))
         .sort_values("Emissions_tCO2e", ascending=False)
     )
+    st.dataframe(hubs_summary.round({"Emissions_tCO2e": 2, "Distance_km": 0}), use_container_width=True, hide_index=True)
 
-    top_n = min(15, len(by_dimension))
-    fig_dimension = px.bar(
-        by_dimension.head(top_n),
-        x=selected_dimension,
-        y="Emissions_tCO2e",
-        text_auto=".1f",
-        title=f"Emissions by {label(selected_dimension)} ({selected_year})",
-        labels={selected_dimension: label(selected_dimension), "Emissions_tCO2e": "Emissions (tCO₂e)"},
+with tab_cabin:
+    cabin_summary = (
+        selected.groupby("Cabin Class", as_index=False)
+        .agg(Flights=("Emissions_tCO2e", "size"), Emissions_tCO2e=("Emissions_tCO2e", "sum"), Distance_km=("Distance_km", "sum"))
+        .sort_values("Emissions_tCO2e", ascending=False)
     )
-    fig_dimension.update_layout(height=450, margin=dict(l=20, r=20, t=60, b=90), xaxis_tickangle=-30)
-    st.plotly_chart(fig_dimension, use_container_width=True)
-
-    st.dataframe(
-        by_dimension.round({"Emissions_tCO2e": 2, "Distance_km": 0}),
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            selected_dimension: st.column_config.TextColumn(label(selected_dimension)),
-            "Flights": st.column_config.NumberColumn("Flights", format="%d"),
-            "Emissions_tCO2e": st.column_config.NumberColumn("Emissions (tCO₂e)", format="%.2f"),
-            "Distance_km": st.column_config.NumberColumn("Distance (km)", format="%.0f"),
-        },
-    )
-
-    # Annual trend for top groups.
-    top_groups = by_dimension[selected_dimension].head(8).tolist()
-    trend = filtered_all_years[filtered_all_years[selected_dimension].isin(top_groups)]
-    trend = trend.groupby(["Year", selected_dimension], as_index=False)["Emissions_tCO2e"].sum()
-
-    if len(trend):
-        fig_trend = px.line(
-            trend,
-            x="Year",
-            y="Emissions_tCO2e",
-            color=selected_dimension,
-            markers=True,
-            title=f"Annual emissions trend by {label(selected_dimension)}",
-            labels={"Year": "Year", "Emissions_tCO2e": "Emissions (tCO₂e)", selected_dimension: label(selected_dimension)},
-        )
-        fig_trend.update_xaxes(
-            tickmode="array",
-            tickvals=annual["Year"].astype(int).tolist(),
-            ticktext=[str(int(y)) for y in annual["Year"].tolist()],
-        )
-        fig_trend.update_layout(height=430, margin=dict(l=20, r=20, t=60, b=20))
-        st.plotly_chart(fig_trend, use_container_width=True)
-else:
-    st.info(
-        "To enable this section, add one or more columns to the 'All Integrated Data' sheet, for example: "
-        "Team, Project, Hub, Programme, Department, Cost_Center, or Travel_Purpose. "
-        "The dashboard will detect these columns automatically after the workbook is updated."
-    )
-
-# ==========================================================
-# Top routes
-# ==========================================================
-st.divider()
-st.subheader("Top routes")
-top_routes = (
-    selected.groupby("Route", as_index=False)
-    .agg(
-        Flights=("Emissions_tCO2e", "size"),
-        Emissions_tCO2e=("Emissions_tCO2e", "sum"),
-        Distance_km=("Distance_km", "sum"),
-    )
-    .sort_values("Emissions_tCO2e", ascending=False)
-    .head(15)
-)
-st.dataframe(
-    top_routes.round({"Emissions_tCO2e": 2, "Distance_km": 0}),
-    use_container_width=True,
-    hide_index=True,
-    column_config={
-        "Route": st.column_config.TextColumn("Route"),
-        "Flights": st.column_config.NumberColumn("Flights", format="%d"),
-        "Emissions_tCO2e": st.column_config.NumberColumn("Emissions (tCO₂e)", format="%.2f"),
-        "Distance_km": st.column_config.NumberColumn("Distance (km)", format="%.0f"),
-    },
-)
+    st.dataframe(cabin_summary.round({"Emissions_tCO2e": 2, "Distance_km": 0}), use_container_width=True, hide_index=True)
 
 with st.expander("Fields used by this dashboard"):
     st.write(
-        "The app reads the original workbook, then keeps only the fields needed for dashboarding. "
-        "Core fields: Date, Year, DepartureAirport, ArrivalAirport, Route, Class, Distance_km, Emissions_tCO2e, Month, Month_name."
+        "Core dashboard fields: Date, Year, DepartureAirport, ArrivalAirport, Route, Cabin Class, Hubs, Distance_km, Emissions_tCO2e, Month, Month_name."
     )
-    if available_dimensions:
-        st.write("Detected granularity fields:", ", ".join([label(dim) for dim in available_dimensions]))
-    else:
-        st.write("No granularity fields detected yet. Add Team, Project, Hub, etc. to All Integrated Data to activate granular filters and charts.")
+    st.write("Excel column `Traveler Department` is displayed as `Hubs` in the dashboard. Blank or zero department values are grouped only in the dashboard as `Unassigned`.")
