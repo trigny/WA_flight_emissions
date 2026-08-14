@@ -12,6 +12,7 @@ st.set_page_config(page_title="MyClimate Dashboard", page_icon="📊", layout="w
 # Put your current workbook in the same folder as this app.
 # The app tries these names in order so you can keep either filename.
 WORKBOOK_CANDIDATES = [
+    "MyClimate_Methodology_Workbook_department_all_sources.xlsx",
     "MyClimate Methodology Workbook_final_updated_department_blankJ.xlsx",
     "MyClimate Methodology Workbook_final_updated_department.xlsx",
     "MyClimate Methodology Workbook_final (1).xlsx",
