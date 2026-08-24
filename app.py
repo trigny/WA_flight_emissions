@@ -86,8 +86,16 @@ def load_data(file_mtime: float):
     flights["Route"] = flights["DepartureAirport"] + " → " + flights["ArrivalAirport"]
 
     flights["Cabin Class"] = clean_text(flights[cabin_col], "Unknown").str.lower()
-    flights["Teams"] = clean_text(flights[team_col], "Unassigned") if team_col else "Unassigned"
-    flights["Flight Type"] = clean_text(flights["Flight_Type"], "Unknown").str.lower().replace({"short_haul": "Short haul", "medium_haul": "Medium haul", "long_haul": "Long haul"})
+    flights["Teams"] = clean_text(flights[team_col], "Guest") if team_col else "Guest"
+    flights["Flight Type"] = (
+        flights["Flight_Type"].fillna("").astype(str).str.strip().str.lower()
+        .replace({
+            "very_short_haul": "Very short haul",
+            "short_haul": "Short haul",
+            "medium_haul": "Medium haul",
+            "long_haul": "Long haul",
+        })
+    )
     flights["Distance_km"] = pd.to_numeric(flights["Distance_km"], errors="coerce").fillna(0)
     flights["Emissions_tCO2e"] = pd.to_numeric(flights["Final_RFI3_tCO2e"], errors="coerce").fillna(0)
     flights["Month"] = flights["Date"].dt.month
@@ -282,10 +290,76 @@ with right:
     fig_team.update_layout(height=400, margin=dict(l=20, r=20, t=60, b=90), xaxis_tickangle=-35)
     st.plotly_chart(fig_team, use_container_width=True)
 
-by_flight_type = selected.groupby("Flight Type", as_index=False).agg(Flights=("Emissions_tCO2e", "size"), Emissions_tCO2e=("Emissions_tCO2e", "sum"))
-fig_flight_type = px.bar(by_flight_type, x="Flight Type", y="Emissions_tCO2e", text_auto=".1f", title=f"Emissions by flight type ({selected_year})", category_orders={"Flight Type": ["Short haul", "Medium haul", "Long haul", "Unknown"]}, labels={"Flight Type": "Flight type", "Emissions_tCO2e": "Emissions (tCO₂e)"})
-fig_flight_type.update_layout(height=420, margin=dict(l=20, r=20, t=60, b=60))
-st.plotly_chart(fig_flight_type, use_container_width=True)
+flight_type_order = [
+    "Very short haul (<500 km)",
+    "Short haul (500–1,500 km)",
+    "Medium haul (1,500–4,000 km)",
+    "Long haul (>4,000 km)",
+]
+flight_type_display = {
+    "Very short haul": "Very short haul (<500 km)",
+    "Short haul": "Short haul (500–1,500 km)",
+    "Medium haul": "Medium haul (1,500–4,000 km)",
+    "Long haul": "Long haul (>4,000 km)",
+}
+flight_type_colors = {
+    "Very short haul (<500 km)": "#E45745",
+    "Short haul (500–1,500 km)": "#F2B84B",
+    "Medium haul (1,500–4,000 km)": "#4C93C3",
+    "Long haul (>4,000 km)": "#2F7D78",
+}
+
+# Only valid distance categories are plotted. Blank and unknown records are excluded.
+flight_type_selected = selected[selected["Flight Type"].isin(flight_type_display)].copy()
+flight_type_selected["Flight distance"] = flight_type_selected["Flight Type"].map(flight_type_display)
+by_flight_type = (
+    flight_type_selected.groupby("Flight distance", as_index=False, observed=True)
+    .agg(Flights=("Emissions_tCO2e", "size"), Emissions_tCO2e=("Emissions_tCO2e", "sum"))
+)
+by_flight_type["Flight distance"] = pd.Categorical(
+    by_flight_type["Flight distance"], categories=flight_type_order, ordered=True
+)
+by_flight_type = by_flight_type.sort_values("Flight distance")
+
+pie_left, pie_right = st.columns(2)
+with pie_left:
+    total_flights = int(by_flight_type["Flights"].sum())
+    fig_flights_pie = px.pie(
+        by_flight_type, names="Flight distance", values="Flights",
+        title=f"Flights ({total_flights:,})",
+        category_orders={"Flight distance": flight_type_order},
+        color="Flight distance", color_discrete_map=flight_type_colors,
+    )
+    fig_flights_pie.update_traces(
+        sort=False, direction="clockwise", textposition="outside",
+        texttemplate="%{percent:.1%}<br>(%{value:,.0f})",
+        hovertemplate="%{label}<br>Flights: %{value:,.0f}<br>Share: %{percent:.1%}<extra></extra>",
+    )
+    fig_flights_pie.update_layout(
+        height=500, margin=dict(l=35, r=35, t=80, b=35),
+        legend_title_text="Flight distance", uniformtext_minsize=10,
+        uniformtext_mode="hide",
+    )
+    st.plotly_chart(fig_flights_pie, use_container_width=True)
+
+with pie_right:
+    total_emissions = float(by_flight_type["Emissions_tCO2e"].sum())
+    fig_emissions_pie = px.pie(
+        by_flight_type, names="Flight distance", values="Emissions_tCO2e",
+        title=f"Emissions ({total_emissions:,.2f} tCO₂e)",
+        category_orders={"Flight distance": flight_type_order},
+        color="Flight distance", color_discrete_map=flight_type_colors,
+    )
+    fig_emissions_pie.update_traces(
+        sort=False, direction="clockwise", textposition="outside",
+        texttemplate="%{percent:.1%}<br>(%{value:,.2f} tCO₂e)",
+        hovertemplate="%{label}<br>Emissions: %{value:,.2f} tCO₂e<br>Share: %{percent:.1%}<extra></extra>",
+    )
+    fig_emissions_pie.update_layout(
+        height=500, margin=dict(l=35, r=35, t=80, b=35),
+        showlegend=False, uniformtext_minsize=10, uniformtext_mode="hide",
+    )
+    st.plotly_chart(fig_emissions_pie, use_container_width=True)
 
 # Cabin class by team stacked chart.
 team_cabin = (
@@ -320,7 +394,6 @@ left2, right2 = st.columns((1.1, 1))
 with left2:
     pathway_start_year = 2024
     pathway_target_year = 2030
-    pathway_target_value = 4.0
     annual_relative = annual.dropna(subset=["Relative_tCO2e_per_FTE"]).copy()
     annual_relative = annual_relative[annual_relative["FTE"].gt(0)].copy()
 
@@ -328,10 +401,11 @@ with left2:
     baseline_emissions = filtered_all_years[filtered_all_years["Year"].isin([2023, 2024])].groupby("Year")["Emissions_tCO2e"].sum().reindex([2023, 2024])
     baseline_fte = fte[fte["Year"].isin([2023, 2024])].set_index("Year")["FTE"].reindex([2023, 2024])
     pathway_start_value = float(baseline_emissions.mean() / baseline_fte.mean()) if baseline_emissions.notna().all() and baseline_fte.notna().all() and baseline_fte.mean() != 0 else None
+    pathway_target_value = pathway_start_value / 2 if pathway_start_value is not None else None
 
     fig_annual = go.Figure()
     fig_annual.add_bar(x=annual_relative["Year"], y=annual_relative["Relative_tCO2e_per_FTE"], name="Emissions per FTE", marker_color="#4F81BD", text=annual_relative["Relative_tCO2e_per_FTE"].round(2), textposition="outside", hovertemplate="%{x}: %{y:.2f} tCO₂e/FTE<extra></extra>")
-    if pathway_start_value is not None:
+    if pathway_start_value is not None and pathway_target_value is not None:
         pathway_years = list(range(pathway_start_year, pathway_target_year + 1))
         annual_step = (pathway_target_value - pathway_start_value) / (pathway_target_year - pathway_start_year)
         pathway_values = [pathway_start_value + annual_step * (year - pathway_start_year) for year in pathway_years]
