@@ -55,11 +55,7 @@ def load_data(file_mtime: float):
 
     # Support both old and new workbook headers.
     cabin_col = "Cabin Class" if "Cabin Class" in all_data.columns else "Class"
-    team_col = (
-        "Team" if "Team" in all_data.columns
-        else "Traveler Department" if "Traveler Department" in all_data.columns
-        else None
-    )
+    team_col = "Team" if "Team" in all_data.columns else None
 
     required = [
         "Date",
@@ -91,15 +87,7 @@ def load_data(file_mtime: float):
 
     flights["Cabin Class"] = clean_text(flights[cabin_col], "Unknown").str.lower()
     flights["Teams"] = clean_text(flights[team_col], "Unassigned") if team_col else "Unassigned"
-    flights["Flight Type"] = (
-        clean_text(flights["Flight_Type"], "Unknown")
-        .str.lower()
-        .replace({
-            "short_haul": "Short haul",
-            "medium_haul": "Medium haul",
-            "long_haul": "Long haul",
-        })
-    )
+    flights["Flight Type"] = clean_text(flights["Flight_Type"], "Unknown").str.lower().replace({"short_haul": "Short haul", "medium_haul": "Medium haul", "long_haul": "Long haul"})
     flights["Distance_km"] = pd.to_numeric(flights["Distance_km"], errors="coerce").fillna(0)
     flights["Emissions_tCO2e"] = pd.to_numeric(flights["Final_RFI3_tCO2e"], errors="coerce").fillna(0)
     flights["Month"] = flights["Date"].dt.month
@@ -177,7 +165,7 @@ if not available_years:
 # Header and controls
 # -------------------------------------------------------------------
 st.title("📊 MyClimate Flight Emissions Dashboard")
-st.caption("Reads the **Team** and **Flight_Type** fields from the updated Excel workflow.")
+st.caption("Reads the Team and Flight_Type fields from the updated Excel workflow.")
 
 default_year = workbook_default_year if workbook_default_year in available_years else max(available_years)
 
@@ -294,19 +282,8 @@ with right:
     fig_team.update_layout(height=400, margin=dict(l=20, r=20, t=60, b=90), xaxis_tickangle=-35)
     st.plotly_chart(fig_team, use_container_width=True)
 
-by_flight_type = (
-    selected.groupby("Flight Type", as_index=False)
-    .agg(Flights=("Emissions_tCO2e", "size"), Emissions_tCO2e=("Emissions_tCO2e", "sum"))
-)
-fig_flight_type = px.bar(
-    by_flight_type,
-    x="Flight Type",
-    y="Emissions_tCO2e",
-    text_auto=".1f",
-    title=f"Emissions by flight type ({selected_year})",
-    category_orders={"Flight Type": ["Short haul", "Medium haul", "Long haul", "Unknown"]},
-    labels={"Flight Type": "Flight type", "Emissions_tCO2e": "Emissions (tCO₂e)"},
-)
+by_flight_type = selected.groupby("Flight Type", as_index=False).agg(Flights=("Emissions_tCO2e", "size"), Emissions_tCO2e=("Emissions_tCO2e", "sum"))
+fig_flight_type = px.bar(by_flight_type, x="Flight Type", y="Emissions_tCO2e", text_auto=".1f", title=f"Emissions by flight type ({selected_year})", category_orders={"Flight Type": ["Short haul", "Medium haul", "Long haul", "Unknown"]}, labels={"Flight Type": "Flight type", "Emissions_tCO2e": "Emissions (tCO₂e)"})
 fig_flight_type.update_layout(height=420, margin=dict(l=20, r=20, t=60, b=60))
 st.plotly_chart(fig_flight_type, use_container_width=True)
 
@@ -344,57 +321,26 @@ with left2:
     pathway_start_year = 2024
     pathway_target_year = 2030
     pathway_target_value = 4.0
-
     annual_relative = annual.dropna(subset=["Relative_tCO2e_per_FTE"]).copy()
     annual_relative = annual_relative[annual_relative["FTE"].gt(0)].copy()
-    start_rows = annual_relative.loc[
-        annual_relative["Year"].eq(pathway_start_year),
-        "Relative_tCO2e_per_FTE",
-    ]
-    pathway_start_value = float(start_rows.iloc[0]) if not start_rows.empty else None
+
+    # Same baseline definition as the Excel dashboard:
+    # average 2023/2024 emissions divided by average 2023/2024 FTE.
+    baseline_emissions = filtered_all_years[filtered_all_years["Year"].isin([2023, 2024])].groupby("Year")["Emissions_tCO2e"].sum().reindex([2023, 2024])
+    baseline_fte = fte[fte["Year"].isin([2023, 2024])].set_index("Year")["FTE"].reindex([2023, 2024])
+    pathway_start_value = float(baseline_emissions.mean() / baseline_fte.mean()) if baseline_emissions.notna().all() and baseline_fte.notna().all() and baseline_fte.mean() != 0 else None
 
     fig_annual = go.Figure()
-    fig_annual.add_bar(
-        x=annual_relative["Year"],
-        y=annual_relative["Relative_tCO2e_per_FTE"],
-        name="Relative emissions",
-        marker_color="#4F81BD",
-        text=annual_relative["Relative_tCO2e_per_FTE"].round(2),
-        textposition="outside",
-        hovertemplate="%{x}: %{y:.2f} tCO₂e/FTE<extra></extra>",
-    )
-
+    fig_annual.add_bar(x=annual_relative["Year"], y=annual_relative["Relative_tCO2e_per_FTE"], name="Relative emissions", marker_color="#4F81BD", text=annual_relative["Relative_tCO2e_per_FTE"].round(2), textposition="outside", hovertemplate="%{x}: %{y:.2f} tCO₂e/FTE<extra></extra>")
     if pathway_start_value is not None:
         pathway_years = list(range(pathway_start_year, pathway_target_year + 1))
         annual_step = (pathway_target_value - pathway_start_value) / (pathway_target_year - pathway_start_year)
-        pathway_values = [
-            pathway_start_value + annual_step * (year - pathway_start_year)
-            for year in pathway_years
-        ]
-        fig_annual.add_scatter(
-            x=pathway_years,
-            y=pathway_values,
-            mode="lines",
-            name="Relative emission target",
-            line=dict(color="#2F5597", width=3, dash="dot"),
-            hovertemplate="%{x}: %{y:.2f} tCO₂e/FTE<extra></extra>",
-        )
-
+        pathway_values = [pathway_start_value + annual_step * (year - pathway_start_year) for year in pathway_years]
+        fig_annual.add_scatter(x=pathway_years, y=pathway_values, mode="lines", name="Relative emission target", line=dict(color="#2F5597", width=3, dash="dot"), hovertemplate="%{x}: %{y:.2f} tCO₂e/FTE<extra></extra>")
     chart_years = sorted(set(annual["Year"].astype(int).tolist() + list(range(2024, 2031))))
-    fig_annual.update_xaxes(
-        tickmode="array",
-        tickvals=chart_years,
-        ticktext=[str(year) for year in chart_years],
-        title="Year",
-    )
+    fig_annual.update_xaxes(tickmode="array", tickvals=chart_years, ticktext=[str(year) for year in chart_years], title="Year")
     fig_annual.update_yaxes(title="tCO₂e / FTE", rangemode="tozero")
-    fig_annual.update_layout(
-        title="Annual relative emissions",
-        height=420,
-        margin=dict(l=20, r=20, t=60, b=20),
-        legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="center", x=0.5),
-        bargap=0.55,
-    )
+    fig_annual.update_layout(title="Annual relative emissions", height=420, margin=dict(l=20, r=20, t=60, b=20), legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="center", x=0.5), bargap=0.55)
     st.plotly_chart(fig_annual, use_container_width=True)
 
 with right2:
