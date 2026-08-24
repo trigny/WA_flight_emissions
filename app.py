@@ -44,7 +44,7 @@ def annual_table_config():
         "Emissions_tCO2e": st.column_config.NumberColumn("Emissions (tCO₂e)", format="%.2f"),
         "Distance_km": st.column_config.NumberColumn("Distance (km)", format="%.0f"),
         "FTE": st.column_config.NumberColumn("FTE", format="%.1f"),
-        "Relative_tCO2e_per_FTE": st.column_config.NumberColumn("Relative emissions (tCO₂e/FTE)", format="%.2f"),
+        "Relative_tCO2e_per_FTE": st.column_config.NumberColumn("Emissions per FTE (tCO₂e/FTE)", format="%.2f"),
     }
 
 
@@ -86,16 +86,8 @@ def load_data(file_mtime: float):
     flights["Route"] = flights["DepartureAirport"] + " → " + flights["ArrivalAirport"]
 
     flights["Cabin Class"] = clean_text(flights[cabin_col], "Unknown").str.lower()
-    flights["Teams"] = clean_text(flights[team_col], "Guest") if team_col else "Guest"
-    flights["Flight Type"] = (
-        flights["Flight_Type"].fillna("").astype(str).str.strip().str.lower()
-        .replace({
-            "very_short_haul": "Very short haul",
-            "short_haul": "Short haul",
-            "medium_haul": "Medium haul",
-            "long_haul": "Long haul",
-        })
-    )
+    flights["Teams"] = clean_text(flights[team_col], "Unassigned") if team_col else "Unassigned"
+    flights["Flight Type"] = clean_text(flights["Flight_Type"], "Unknown").str.lower().replace({"short_haul": "Short haul", "medium_haul": "Medium haul", "long_haul": "Long haul"})
     flights["Distance_km"] = pd.to_numeric(flights["Distance_km"], errors="coerce").fillna(0)
     flights["Emissions_tCO2e"] = pd.to_numeric(flights["Final_RFI3_tCO2e"], errors="coerce").fillna(0)
     flights["Month"] = flights["Date"].dt.month
@@ -224,7 +216,7 @@ k1, k2, k3, k4 = st.columns(4)
 k1.metric("Flights", f"{selected_flights:,.0f}")
 k2.metric("Emissions", f"{selected_emissions:,.1f} tCO₂e")
 k3.metric("Distance", f"{selected_distance:,.0f} km")
-k4.metric("Relative emissions", "n/a" if selected_relative is None else f"{selected_relative:,.2f} tCO₂e/FTE")
+k4.metric("Emissions per FTE", "n/a" if selected_relative is None else f"{selected_relative:,.2f} tCO₂e/FTE")
 if baseline_abs is not None:
     st.caption(f"Baseline absolute emissions: {baseline_abs:,.1f} tCO₂e based on {', '.join(map(str, baseline_years))}.")
 
@@ -290,76 +282,10 @@ with right:
     fig_team.update_layout(height=400, margin=dict(l=20, r=20, t=60, b=90), xaxis_tickangle=-35)
     st.plotly_chart(fig_team, use_container_width=True)
 
-flight_type_order = [
-    "Very short haul (<500 km)",
-    "Short haul (500–1,500 km)",
-    "Medium haul (1,500–4,000 km)",
-    "Long haul (>4,000 km)",
-]
-flight_type_display = {
-    "Very short haul": "Very short haul (<500 km)",
-    "Short haul": "Short haul (500–1,500 km)",
-    "Medium haul": "Medium haul (1,500–4,000 km)",
-    "Long haul": "Long haul (>4,000 km)",
-}
-flight_type_colors = {
-    "Very short haul (<500 km)": "#E45745",
-    "Short haul (500–1,500 km)": "#F2B84B",
-    "Medium haul (1,500–4,000 km)": "#4C93C3",
-    "Long haul (>4,000 km)": "#2F7D78",
-}
-
-# Only valid distance categories are plotted. Blank and unknown records are excluded.
-flight_type_selected = selected[selected["Flight Type"].isin(flight_type_display)].copy()
-flight_type_selected["Flight distance"] = flight_type_selected["Flight Type"].map(flight_type_display)
-by_flight_type = (
-    flight_type_selected.groupby("Flight distance", as_index=False, observed=True)
-    .agg(Flights=("Emissions_tCO2e", "size"), Emissions_tCO2e=("Emissions_tCO2e", "sum"))
-)
-by_flight_type["Flight distance"] = pd.Categorical(
-    by_flight_type["Flight distance"], categories=flight_type_order, ordered=True
-)
-by_flight_type = by_flight_type.sort_values("Flight distance")
-
-pie_left, pie_right = st.columns(2)
-with pie_left:
-    total_flights = int(by_flight_type["Flights"].sum())
-    fig_flights_pie = px.pie(
-        by_flight_type, names="Flight distance", values="Flights",
-        title=f"Flights ({total_flights:,})",
-        category_orders={"Flight distance": flight_type_order},
-        color="Flight distance", color_discrete_map=flight_type_colors,
-    )
-    fig_flights_pie.update_traces(
-        sort=False, direction="clockwise", textposition="outside",
-        texttemplate="%{percent:.1%}<br>(%{value:,.0f})",
-        hovertemplate="%{label}<br>Flights: %{value:,.0f}<br>Share: %{percent:.1%}<extra></extra>",
-    )
-    fig_flights_pie.update_layout(
-        height=500, margin=dict(l=35, r=35, t=80, b=35),
-        legend_title_text="Flight distance", uniformtext_minsize=10,
-        uniformtext_mode="hide",
-    )
-    st.plotly_chart(fig_flights_pie, use_container_width=True)
-
-with pie_right:
-    total_emissions = float(by_flight_type["Emissions_tCO2e"].sum())
-    fig_emissions_pie = px.pie(
-        by_flight_type, names="Flight distance", values="Emissions_tCO2e",
-        title=f"Emissions ({total_emissions:,.2f} tCO₂e)",
-        category_orders={"Flight distance": flight_type_order},
-        color="Flight distance", color_discrete_map=flight_type_colors,
-    )
-    fig_emissions_pie.update_traces(
-        sort=False, direction="clockwise", textposition="outside",
-        texttemplate="%{percent:.1%}<br>(%{value:,.2f} tCO₂e)",
-        hovertemplate="%{label}<br>Emissions: %{value:,.2f} tCO₂e<br>Share: %{percent:.1%}<extra></extra>",
-    )
-    fig_emissions_pie.update_layout(
-        height=500, margin=dict(l=35, r=35, t=80, b=35),
-        showlegend=False, uniformtext_minsize=10, uniformtext_mode="hide",
-    )
-    st.plotly_chart(fig_emissions_pie, use_container_width=True)
+by_flight_type = selected.groupby("Flight Type", as_index=False).agg(Flights=("Emissions_tCO2e", "size"), Emissions_tCO2e=("Emissions_tCO2e", "sum"))
+fig_flight_type = px.bar(by_flight_type, x="Flight Type", y="Emissions_tCO2e", text_auto=".1f", title=f"Emissions by flight type ({selected_year})", category_orders={"Flight Type": ["Short haul", "Medium haul", "Long haul", "Unknown"]}, labels={"Flight Type": "Flight type", "Emissions_tCO2e": "Emissions (tCO₂e)"})
+fig_flight_type.update_layout(height=420, margin=dict(l=20, r=20, t=60, b=60))
+st.plotly_chart(fig_flight_type, use_container_width=True)
 
 # Cabin class by team stacked chart.
 team_cabin = (
@@ -394,6 +320,7 @@ left2, right2 = st.columns((1.1, 1))
 with left2:
     pathway_start_year = 2024
     pathway_target_year = 2030
+    pathway_target_value = 4.0
     annual_relative = annual.dropna(subset=["Relative_tCO2e_per_FTE"]).copy()
     annual_relative = annual_relative[annual_relative["FTE"].gt(0)].copy()
 
@@ -401,20 +328,19 @@ with left2:
     baseline_emissions = filtered_all_years[filtered_all_years["Year"].isin([2023, 2024])].groupby("Year")["Emissions_tCO2e"].sum().reindex([2023, 2024])
     baseline_fte = fte[fte["Year"].isin([2023, 2024])].set_index("Year")["FTE"].reindex([2023, 2024])
     pathway_start_value = float(baseline_emissions.mean() / baseline_fte.mean()) if baseline_emissions.notna().all() and baseline_fte.notna().all() and baseline_fte.mean() != 0 else None
-    pathway_target_value = pathway_start_value / 2 if pathway_start_value is not None else None
 
     fig_annual = go.Figure()
-    fig_annual.add_bar(x=annual_relative["Year"], y=annual_relative["Relative_tCO2e_per_FTE"], name="Relative emissions", marker_color="#4F81BD", text=annual_relative["Relative_tCO2e_per_FTE"].round(2), textposition="outside", hovertemplate="%{x}: %{y:.2f} tCO₂e/FTE<extra></extra>")
-    if pathway_start_value is not None and pathway_target_value is not None:
+    fig_annual.add_bar(x=annual_relative["Year"], y=annual_relative["Relative_tCO2e_per_FTE"], name="Emissions per FTE", marker_color="#4F81BD", text=annual_relative["Relative_tCO2e_per_FTE"].round(2), textposition="outside", hovertemplate="%{x}: %{y:.2f} tCO₂e/FTE<extra></extra>")
+    if pathway_start_value is not None:
         pathway_years = list(range(pathway_start_year, pathway_target_year + 1))
         annual_step = (pathway_target_value - pathway_start_value) / (pathway_target_year - pathway_start_year)
         pathway_values = [pathway_start_value + annual_step * (year - pathway_start_year) for year in pathway_years]
         pathway_labels = [f"{value:.2f}" for value in pathway_values]
-        fig_annual.add_scatter(x=pathway_years, y=pathway_values, mode="lines+text", text=pathway_labels, textposition="top center", textfont=dict(color="#2F5597", size=11), cliponaxis=False, name="Relative emission target", line=dict(color="#2F5597", width=3, dash="dot"), hovertemplate="%{x}: %{y:.2f} tCO₂e/FTE<extra></extra>")
+        fig_annual.add_scatter(x=pathway_years, y=pathway_values, mode="lines+text", text=pathway_labels, textposition="top center", textfont=dict(color="#2F5597", size=11), cliponaxis=False, name="Emissions per FTE target", line=dict(color="#2F5597", width=3, dash="dot"), hovertemplate="%{x}: %{y:.2f} tCO₂e/FTE<extra></extra>")
     chart_years = sorted(set(annual["Year"].astype(int).tolist() + list(range(2024, 2031))))
     fig_annual.update_xaxes(tickmode="array", tickvals=chart_years, ticktext=[str(year) for year in chart_years], title="Year")
     fig_annual.update_yaxes(title="tCO₂e / FTE", rangemode="tozero")
-    fig_annual.update_layout(title="Annual relative emissions", height=420, margin=dict(l=20, r=20, t=60, b=20), legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="center", x=0.5), bargap=0.55)
+    fig_annual.update_layout(title="Annual emissions per FTE", height=420, margin=dict(l=20, r=20, t=60, b=20), legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="center", x=0.5), bargap=0.55)
     st.plotly_chart(fig_annual, use_container_width=True)
 
 with right2:
@@ -450,8 +376,3 @@ with tab_cabin:
     )
     st.dataframe(cabin_summary.round({"Emissions_tCO2e": 2, "Distance_km": 0}), use_container_width=True, hide_index=True)
 
-with st.expander("Fields used by this dashboard"):
-    st.write(
-        "Core dashboard fields: Date, Year, DepartureAirport, ArrivalAirport, Route, Cabin Class, Flight Type, Teams, Distance_km, Emissions_tCO2e, Month, Month_name."
-    )
-    st.write("Excel column `Team` is displayed as `Teams`. Blank or zero team values are grouped as `Unassigned`.")
