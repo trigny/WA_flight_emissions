@@ -86,8 +86,22 @@ def load_data(file_mtime: float):
     flights["Route"] = flights["DepartureAirport"] + " → " + flights["ArrivalAirport"]
 
     flights["Cabin Class"] = clean_text(flights[cabin_col], "Unknown").str.lower()
-    flights["Teams"] = clean_text(flights[team_col], "Unassigned") if team_col else "Unassigned"
-    flights["Flight Type"] = clean_text(flights["Flight_Type"], "Unknown").str.lower().replace({"short_haul": "Short haul", "medium_haul": "Medium haul", "long_haul": "Long haul"})
+    flights["Teams"] = clean_text(flights[team_col], "Guest") if team_col else "Guest"
+    flights["Flight Type"] = (
+        flights["Flight_Type"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.lower()
+        .replace(
+            {
+                "very_short_haul": "Very short haul",
+                "short_haul": "Short haul",
+                "medium_haul": "Medium haul",
+                "long_haul": "Long haul",
+            }
+        )
+    )
     flights["Distance_km"] = pd.to_numeric(flights["Distance_km"], errors="coerce").fillna(0)
     flights["Emissions_tCO2e"] = pd.to_numeric(flights["Final_RFI3_tCO2e"], errors="coerce").fillna(0)
     flights["Month"] = flights["Date"].dt.month
@@ -282,8 +296,38 @@ with right:
     fig_team.update_layout(height=400, margin=dict(l=20, r=20, t=60, b=90), xaxis_tickangle=-35)
     st.plotly_chart(fig_team, use_container_width=True)
 
-by_flight_type = selected.groupby("Flight Type", as_index=False).agg(Flights=("Emissions_tCO2e", "size"), Emissions_tCO2e=("Emissions_tCO2e", "sum"))
-fig_flight_type = px.bar(by_flight_type, x="Flight Type", y="Emissions_tCO2e", text_auto=".1f", title=f"Emissions by flight type ({selected_year})", category_orders={"Flight Type": ["Short haul", "Medium haul", "Long haul", "Unknown"]}, labels={"Flight Type": "Flight type", "Emissions_tCO2e": "Emissions (tCO₂e)"})
+flight_type_order = ["Very short haul", "Short haul", "Medium haul", "Long haul"]
+
+# Exclude blank, null and Unknown values. The Excel workflow only assigns
+# one of the four distance categories to active flight records.
+flight_type_selected = selected[
+    selected["Flight Type"].isin(flight_type_order)
+].copy()
+
+by_flight_type = (
+    flight_type_selected.groupby("Flight Type", as_index=False, observed=True)
+    .agg(
+        Flights=("Emissions_tCO2e", "size"),
+        Emissions_tCO2e=("Emissions_tCO2e", "sum"),
+    )
+)
+by_flight_type["Flight Type"] = pd.Categorical(
+    by_flight_type["Flight Type"],
+    categories=flight_type_order,
+    ordered=True,
+)
+by_flight_type = by_flight_type.sort_values("Flight Type")
+
+fig_flight_type = px.bar(
+    by_flight_type,
+    x="Flight Type",
+    y="Emissions_tCO2e",
+    text_auto=".1f",
+    title=f"Emissions by flight type ({selected_year})",
+    category_orders={"Flight Type": flight_type_order},
+    labels={"Flight Type": "Flight type", "Emissions_tCO2e": "Emissions (tCO₂e)"},
+)
+fig_flight_type.update_xaxes(categoryorder="array", categoryarray=flight_type_order)
 fig_flight_type.update_layout(height=420, margin=dict(l=20, r=20, t=60, b=60))
 st.plotly_chart(fig_flight_type, use_container_width=True)
 
@@ -380,4 +424,4 @@ with st.expander("Fields used by this dashboard"):
     st.write(
         "Core dashboard fields: Date, Year, DepartureAirport, ArrivalAirport, Route, Cabin Class, Flight Type, Teams, Distance_km, Emissions_tCO2e, Month, Month_name."
     )
-    st.write("Excel column `Team` is displayed as `Teams`. Blank or zero team values are grouped as `Unassigned`.")
+    st.write("Excel column `Team` is displayed as `Teams`. Blank or zero Team values are grouped as `Guest`.")
