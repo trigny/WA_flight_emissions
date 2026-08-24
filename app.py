@@ -10,7 +10,6 @@ st.set_page_config(page_title="MyClimate Dashboard", page_icon="📊", layout="w
 # -------------------------------------------------------------------
 # Workbook source
 # -------------------------------------------------------------------
-# The workbook must be stored in the same folder as this Streamlit app.
 EXCEL_FILE = Path(__file__).parent / "Flight Emissions Dashboard.xlsx"
 
 ALL_DATA_SHEET = "All Integrated Data"
@@ -68,6 +67,7 @@ def load_data(file_mtime: float):
         "DepartureAirport",
         "ArrivalAirport",
         cabin_col,
+        "Flight_Type",
         "Distance_km",
         "Final_RFI3_tCO2e",
         "Include_Final",
@@ -91,6 +91,15 @@ def load_data(file_mtime: float):
 
     flights["Cabin Class"] = clean_text(flights[cabin_col], "Unknown").str.lower()
     flights["Teams"] = clean_text(flights[team_col], "Unassigned") if team_col else "Unassigned"
+    flights["Flight Type"] = (
+        clean_text(flights["Flight_Type"], "Unknown")
+        .str.lower()
+        .replace({
+            "short_haul": "Short haul",
+            "medium_haul": "Medium haul",
+            "long_haul": "Long haul",
+        })
+    )
     flights["Distance_km"] = pd.to_numeric(flights["Distance_km"], errors="coerce").fillna(0)
     flights["Emissions_tCO2e"] = pd.to_numeric(flights["Final_RFI3_tCO2e"], errors="coerce").fillna(0)
     flights["Month"] = flights["Date"].dt.month
@@ -104,6 +113,7 @@ def load_data(file_mtime: float):
             "ArrivalAirport",
             "Route",
             "Cabin Class",
+            "Flight Type",
             "Teams",
             "Distance_km",
             "Emissions_tCO2e",
@@ -148,10 +158,7 @@ def make_annual_summary(data: pd.DataFrame, fte_data: pd.DataFrame) -> pd.DataFr
 # Load workbook
 # -------------------------------------------------------------------
 if not EXCEL_FILE.exists():
-    st.error(
-        "The workbook 'Flight Emissions Dashboard.xlsx' was not found. "
-        "Place it in the same folder as app.py."
-    )
+    st.error("The workbook 'Flight Emissions Dashboard.xlsx' was not found. Place it in the same folder as app.py.")
     st.stop()
 
 try:
@@ -170,7 +177,7 @@ if not available_years:
 # Header and controls
 # -------------------------------------------------------------------
 st.title("📊 MyClimate Flight Emissions Dashboard")
-st.caption("Reads the **Team** field from the updated Excel workflow.")
+st.caption("Reads the **Team** and **Flight_Type** fields from the updated Excel workflow.")
 
 default_year = workbook_default_year if workbook_default_year in available_years else max(available_years)
 
@@ -287,6 +294,22 @@ with right:
     fig_team.update_layout(height=400, margin=dict(l=20, r=20, t=60, b=90), xaxis_tickangle=-35)
     st.plotly_chart(fig_team, use_container_width=True)
 
+by_flight_type = (
+    selected.groupby("Flight Type", as_index=False)
+    .agg(Flights=("Emissions_tCO2e", "size"), Emissions_tCO2e=("Emissions_tCO2e", "sum"))
+)
+fig_flight_type = px.bar(
+    by_flight_type,
+    x="Flight Type",
+    y="Emissions_tCO2e",
+    text_auto=".1f",
+    title=f"Emissions by flight type ({selected_year})",
+    category_orders={"Flight Type": ["Short haul", "Medium haul", "Long haul", "Unknown"]},
+    labels={"Flight Type": "Flight type", "Emissions_tCO2e": "Emissions (tCO₂e)"},
+)
+fig_flight_type.update_layout(height=420, margin=dict(l=20, r=20, t=60, b=60))
+st.plotly_chart(fig_flight_type, use_container_width=True)
+
 # Cabin class by team stacked chart.
 team_cabin = (
     selected.groupby(["Teams", "Cabin Class"], as_index=False)
@@ -318,33 +341,17 @@ st.plotly_chart(fig_stack, use_container_width=True)
 left2, right2 = st.columns((1.1, 1))
 
 with left2:
-    # Bars show actual annual relative emissions. The dotted pathway starts
-    # in 2026 and declines linearly to 4 tCO₂e/FTE in 2030.
-    pathway_start_year = 2026
+    pathway_start_year = 2024
     pathway_target_year = 2030
     pathway_target_value = 4.0
 
     annual_relative = annual.dropna(subset=["Relative_tCO2e_per_FTE"]).copy()
     annual_relative = annual_relative[annual_relative["FTE"].gt(0)].copy()
-
-    baseline_relative_rows = annual_relative[annual_relative["Year"].isin(baseline_years)]
-    baseline_relative = (
-        float(baseline_relative_rows["Relative_tCO2e_per_FTE"].mean())
-        if not baseline_relative_rows.empty
-        else None
-    )
-
-    value_2026 = annual_relative.loc[
+    start_rows = annual_relative.loc[
         annual_relative["Year"].eq(pathway_start_year),
         "Relative_tCO2e_per_FTE",
     ]
-    # Use actual 2026 intensity when FTE is available. Until then, use the
-    # selected baseline years' mean relative intensity as the 2026 start.
-    pathway_start_value = (
-        float(value_2026.iloc[0])
-        if not value_2026.empty and pd.notna(value_2026.iloc[0])
-        else baseline_relative
-    )
+    pathway_start_value = float(start_rows.iloc[0]) if not start_rows.empty else None
 
     fig_annual = go.Figure()
     fig_annual.add_bar(
@@ -357,7 +364,7 @@ with left2:
         hovertemplate="%{x}: %{y:.2f} tCO₂e/FTE<extra></extra>",
     )
 
-    if pathway_start_value is not None and pd.notna(pathway_start_value):
+    if pathway_start_value is not None:
         pathway_years = list(range(pathway_start_year, pathway_target_year + 1))
         annual_step = (pathway_target_value - pathway_start_value) / (pathway_target_year - pathway_start_year)
         pathway_values = [
@@ -368,12 +375,12 @@ with left2:
             x=pathway_years,
             y=pathway_values,
             mode="lines",
-            name="Linear reduction path to 4 tCO₂e/FTE by 2030",
+            name="Relative emission target",
             line=dict(color="#2F5597", width=3, dash="dot"),
             hovertemplate="%{x}: %{y:.2f} tCO₂e/FTE<extra></extra>",
         )
 
-    chart_years = sorted(set(annual["Year"].astype(int).tolist() + list(range(2026, 2031))))
+    chart_years = sorted(set(annual["Year"].astype(int).tolist() + list(range(2024, 2031))))
     fig_annual.update_xaxes(
         tickmode="array",
         tickvals=chart_years,
@@ -390,9 +397,6 @@ with left2:
     )
     st.plotly_chart(fig_annual, use_container_width=True)
 
-    if pathway_start_value is None or pd.isna(pathway_start_value):
-        st.caption("Add a valid 2026 FTE, or select baseline years with valid FTE data, to display the 2026–2030 reduction pathway.")
-
 with right2:
     st.subheader("Annual summary table")
     st.dataframe(
@@ -408,16 +412,7 @@ with right2:
 st.divider()
 st.subheader("Detailed summaries")
 
-tab_routes, tab_teams, tab_cabin = st.tabs(["Top routes", "Teams summary", "Cabin class summary"])
-
-with tab_routes:
-    top_routes = (
-        selected.groupby("Route", as_index=False)
-        .agg(Flights=("Emissions_tCO2e", "size"), Emissions_tCO2e=("Emissions_tCO2e", "sum"), Distance_km=("Distance_km", "sum"))
-        .sort_values("Emissions_tCO2e", ascending=False)
-        .head(20)
-    )
-    st.dataframe(top_routes.round({"Emissions_tCO2e": 2, "Distance_km": 0}), use_container_width=True, hide_index=True)
+tab_teams, tab_cabin = st.tabs(["Teams summary", "Cabin class summary"])
 
 with tab_teams:
     teams_summary = (
@@ -437,6 +432,6 @@ with tab_cabin:
 
 with st.expander("Fields used by this dashboard"):
     st.write(
-        "Core dashboard fields: Date, Year, DepartureAirport, ArrivalAirport, Route, Cabin Class, Teams, Distance_km, Emissions_tCO2e, Month, Month_name."
+        "Core dashboard fields: Date, Year, DepartureAirport, ArrivalAirport, Route, Cabin Class, Flight Type, Teams, Distance_km, Emissions_tCO2e, Month, Month_name."
     )
-    st.write("Excel column `Team` is displayed as `Teams` in the dashboard. Blank or zero team values are grouped only in the dashboard as `Unassigned`.")
+    st.write("Excel column `Team` is displayed as `Teams`. Blank or zero team values are grouped as `Unassigned`.")
