@@ -318,7 +318,7 @@ st.plotly_chart(fig_stack, use_container_width=True)
 left2, right2 = st.columns((1.1, 1))
 
 with left2:
-    pathway_start_year = 2023.5
+    pathway_start_year = 2024
     pathway_target_year = 2030
     pathway_target_value = 4.0
     annual_relative = annual.dropna(subset=["Relative_tCO2e_per_FTE"]).copy()
@@ -332,12 +332,12 @@ with left2:
     fig_annual = go.Figure()
     fig_annual.add_bar(x=annual_relative["Year"], y=annual_relative["Relative_tCO2e_per_FTE"], name="Relative emissions", marker_color="#4F81BD", text=annual_relative["Relative_tCO2e_per_FTE"].round(2), textposition="outside", hovertemplate="%{x}: %{y:.2f} tCO₂e/FTE<extra></extra>")
     if pathway_start_value is not None:
-        pathway_years = [pathway_start_year] + list(range(2024, pathway_target_year + 1))
+        pathway_years = list(range(pathway_start_year, pathway_target_year + 1))
         annual_step = (pathway_target_value - pathway_start_value) / (pathway_target_year - pathway_start_year)
         pathway_values = [pathway_start_value + annual_step * (year - pathway_start_year) for year in pathway_years]
-        pathway_labels = [f"{value:.2f}" if year >= 2026 else "" for year, value in zip(pathway_years, pathway_values)]
+        pathway_labels = [f"{value:.2f}" for value in pathway_values]
         fig_annual.add_scatter(x=pathway_years, y=pathway_values, mode="lines+text", text=pathway_labels, textposition="top center", textfont=dict(color="#2F5597", size=11), cliponaxis=False, name="Relative emission target", line=dict(color="#2F5597", width=3, dash="dot"), hovertemplate="%{x}: %{y:.2f} tCO₂e/FTE<extra></extra>")
-    chart_years = sorted(set(annual["Year"].astype(int).tolist() + list(range(2023, 2031))))
+    chart_years = sorted(set(annual["Year"].astype(int).tolist() + list(range(2024, 2031))))
     fig_annual.update_xaxes(tickmode="array", tickvals=chart_years, ticktext=[str(year) for year in chart_years], title="Year")
     fig_annual.update_yaxes(title="tCO₂e / FTE", rangemode="tozero")
     fig_annual.update_layout(title="Annual relative emissions", height=420, margin=dict(l=20, r=20, t=60, b=20), legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="center", x=0.5), bargap=0.55)
