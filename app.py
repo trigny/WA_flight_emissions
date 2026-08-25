@@ -86,7 +86,7 @@ def load_data(file_mtime: float):
     flights["Route"] = flights["DepartureAirport"] + " → " + flights["ArrivalAirport"]
 
     flights["Cabin Class"] = clean_text(flights[cabin_col], "Unknown").str.lower()
-    flights["Teams"] = clean_text(flights[team_col], "Guest") if team_col else "Guest"
+    flights["Teams"] = clean_text(flights[team_col], "External") if team_col else "External"
     flights["Flight Type"] = (
         flights["Flight_Type"].fillna("").astype(str).str.strip().str.lower()
         .replace({
@@ -227,6 +227,68 @@ k3.metric("Distance", f"{selected_distance:,.0f} km")
 k4.metric("Emissions per FTE", "n/a" if selected_relative is None else f"{selected_relative:,.2f} tCO₂e/FTE")
 if baseline_abs is not None:
     st.caption(f"Baseline absolute emissions: {baseline_abs:,.1f} tCO₂e based on {', '.join(map(str, baseline_years))}.")
+
+# -------------------------------------------------------------------
+# Project planning estimate
+# -------------------------------------------------------------------
+# Use the full, unfiltered 2025 dataset so the planning factor remains stable
+# when dashboard filters or the selected analysis year change.
+planning_reference = flights[
+    flights["Year"].eq(2025)
+    & flights["Cabin Class"].eq("economy")
+    & flights["Flight Type"].eq("Short haul")
+    & flights["Emissions_tCO2e"].gt(0)
+].copy()
+
+st.divider()
+st.subheader("Project planning estimate")
+
+if planning_reference.empty:
+    st.warning("No valid 2025 short-haul economy flights are available for the planning estimate.")
+else:
+    reference_flights = len(planning_reference)
+    reference_average = float(planning_reference["Emissions_tCO2e"].mean())
+    # Round upward to 0.01 tCO₂e to provide a simple, slightly conservative
+    # figure that project leads can use in early planning and budgets.
+    planning_factor = (reference_average * 100).__ceil__() / 100
+    reference_distance = float(planning_reference["Distance_km"].mean())
+
+    e1, e2, e3 = st.columns(3)
+    e1.metric("Planning factor", f"{planning_factor:.2f} tCO₂e per flight segment")
+    e2.metric("2025 reference flights", f"{reference_flights:,}")
+    e3.metric("Average reference distance", f"{reference_distance:,.0f} km")
+
+    st.caption(
+        f"Estimate based on the mean emissions of all {reference_flights:,} included "
+        f"short-haul economy flight segments in 2025 ({reference_average:.3f} tCO₂e per segment), "
+        f"rounded upward to {planning_factor:.2f} tCO₂e for communication and preliminary budgeting. "
+        "A return trip should normally be entered as two flight segments."
+    )
+
+    calc_left, calc_middle, calc_right = st.columns(3)
+    with calc_left:
+        planned_segments = st.number_input(
+            "Planned short-haul economy flight segments",
+            min_value=0,
+            value=2,
+            step=1,
+            help="Count each one-way flight as one segment. A return trip normally equals two segments.",
+        )
+    with calc_middle:
+        estimated_project_emissions = planned_segments * planning_factor
+        st.metric("Estimated project emissions", f"{estimated_project_emissions:,.2f} tCO₂e")
+    with calc_right:
+        carbon_price = st.number_input(
+            "Budget rate (CHF per tCO₂e)",
+            min_value=0.0,
+            value=0.0,
+            step=10.0,
+            help="Optional internal carbon price or compensation rate. Leave at zero if no rate has been defined.",
+        )
+        if carbon_price > 0:
+            st.metric("Estimated carbon budget", f"CHF {estimated_project_emissions * carbon_price:,.0f}")
+        else:
+            st.metric("Estimated carbon budget", "Enter a CHF/tCO₂e rate")
 
 st.divider()
 
