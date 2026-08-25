@@ -259,6 +259,14 @@ else:
     )
     selected_target = yearly_targets[planning_year]
 
+    selected_year_fte = fte.loc[fte["Year"].eq(planning_year), "FTE"].dropna()
+    latest_fte = fte.sort_values("Year")["FTE"].dropna()
+    default_planning_fte = float(selected_year_fte.iloc[0] if not selected_year_fte.empty else latest_fte.iloc[-1])
+    planning_fte = st.number_input(
+        "Planned FTE", min_value=0.1, value=default_planning_fte, step=1.0,
+        help="Flight inputs are totals. Total estimated emissions are divided by this FTE value.",
+    )
+
     reference_years = sorted(
         flights.loc[flights["Emissions_tCO2e"].gt(0), "Year"].dropna().unique().tolist()
     )
@@ -285,7 +293,7 @@ else:
             "Medium haul": "Medium haul (1,500–4,000 km)",
             "Long haul": "Long haul (>4,000 km)",
         }
-        st.markdown("#### Planned one-way flights per FTE")
+        st.markdown("#### Planned one-way flights")
         st.caption(
             f"Average emission factors are calculated from included {reference_year} flights."
         )
@@ -293,9 +301,9 @@ else:
         heading[0].markdown("**Flight distance**")
         heading[1].markdown("**Economy**")
         heading[2].markdown("**Business**")
-        heading[3].markdown("**Estimated tCO₂e/FTE**")
+        heading[3].markdown("**Estimated tCO₂e**")
 
-        planned_emissions = 0.0
+        planned_total_emissions = 0.0
         planned_segments = 0
         unavailable = []
         for flight_type in valid_types:
@@ -308,11 +316,11 @@ else:
                 with input_col:
                     number = st.selectbox(
                         f"{labels[flight_type]} {cabin}",
-                        range(21),
+                        range(501),
                         key=f"plan_{flight_type}_{cabin}",
                         label_visibility="collapsed",
                         help=(
-                            f"One-way {cabin} segments per FTE."
+                            f"Total one-way {cabin} segments for the planned FTE."
                             if available else
                             f"No {reference_year} emission factor is available."
                         ),
@@ -322,7 +330,7 @@ else:
                     row_total += number * float(factors.loc[key, "mean"])
                 elif number:
                     unavailable.append(f"{labels[flight_type]} {cabin}")
-            planned_emissions += row_total
+            planned_total_emissions += row_total
             row[3].write(f"{row_total:.2f}")
 
         if unavailable:
@@ -331,10 +339,11 @@ else:
                 + ", ".join(unavailable)
             )
 
-        remaining = selected_target - planned_emissions
-        share = planned_emissions / selected_target if selected_target > 0 else 0
+        planned_emissions_per_fte = planned_total_emissions / planning_fte
+        remaining = selected_target - planned_emissions_per_fte
+        share = planned_emissions_per_fte / selected_target if selected_target > 0 else 0
         r1, r2, r3 = st.columns(3)
-        r1.metric("Estimated emissions", f"{planned_emissions:.2f} tCO₂e per FTE")
+        r1.metric("Estimated emissions", f"{planned_emissions_per_fte:.2f} tCO₂e per FTE")
         r2.metric(f"{planning_year} target", f"{selected_target:.2f} tCO₂e per FTE")
         r3.metric(
             "Remaining allowance" if remaining >= 0 else "Above target by",
