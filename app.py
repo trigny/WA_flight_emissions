@@ -233,11 +233,6 @@ if baseline_abs is not None:
 # -------------------------------------------------------------------
 st.divider()
 st.subheader("Project planning estimate")
-st.caption(
-    "Choose planned one-way flight segments per FTE and compare the resulting "
-    "emissions with the target for a selected year. A return trip counts as two segments."
-)
-
 planning_years = list(range(2024, 2031))
 baseline_emissions = (
     flights[flights["Year"].isin([2023, 2024])]
@@ -259,17 +254,10 @@ else:
         for year in planning_years
     }
 
-    year_col, target_col = st.columns([1, 2])
-    with year_col:
-        planning_year = st.selectbox(
-            "Target year", planning_years, index=2, key="planning_target_year"
-        )
+    planning_year = st.selectbox(
+        "Target year", planning_years, index=2, key="planning_target_year"
+    )
     selected_target = yearly_targets[planning_year]
-    with target_col:
-        st.metric(
-            f"{planning_year} emissions target",
-            f"{selected_target:.2f} tCO₂e per FTE",
-        )
 
     reference_years = sorted(
         flights.loc[flights["Emissions_tCO2e"].gt(0), "Year"].dropna().unique().tolist()
