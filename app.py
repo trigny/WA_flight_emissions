@@ -333,11 +333,10 @@ else:
 
         remaining = selected_target - planned_emissions
         share = planned_emissions / selected_target if selected_target > 0 else 0
-        r1, r2, r3, r4 = st.columns(4)
-        r1.metric("Planned flights", f"{planned_segments} per FTE")
-        r2.metric("Estimated emissions", f"{planned_emissions:.2f} tCO₂e per FTE")
-        r3.metric(f"{planning_year} target", f"{selected_target:.2f} tCO₂e per FTE")
-        r4.metric(
+        r1, r2, r3 = st.columns(3)
+        r1.metric("Estimated emissions", f"{planned_emissions:.2f} tCO₂e per FTE")
+        r2.metric(f"{planning_year} target", f"{selected_target:.2f} tCO₂e per FTE")
+        r3.metric(
             "Remaining allowance" if remaining >= 0 else "Above target by",
             f"{abs(remaining):.2f} tCO₂e per FTE",
         )
