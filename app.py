@@ -254,25 +254,24 @@ else:
     reference_distance = float(planning_reference["Distance_km"].mean())
 
     e1, e2, e3 = st.columns(3)
-    e1.metric("Planning factor", f"{planning_factor:.2f} tCO₂e per flight segment")
+    e1.metric("Planning factor", f"{planning_factor:.2f} tCO₂e per flight")
     e2.metric("2025 reference flights", f"{reference_flights:,}")
     e3.metric("Average reference distance", f"{reference_distance:,.0f} km")
 
     st.caption(
         f"Estimate based on the mean emissions of all {reference_flights:,} included "
-        f"short-haul economy flight segments in 2025 ({reference_average:.3f} tCO₂e per segment), "
-        f"rounded upward to {planning_factor:.2f} tCO₂e for communication and preliminary budgeting. "
-        "A return trip should normally be entered as two flight segments."
+        f"short-haul economy flight segments in 2025 ({reference_average:.3f} tCO₂e), "
+        "A return trip is considered as a seperate flight."
     )
 
     calc_left, calc_middle, calc_right = st.columns(3)
     with calc_left:
         planned_segments = st.number_input(
-            "Planned short-haul economy flight segments",
+            "Planned short-haul economy flights",
             min_value=0,
             value=2,
             step=1,
-            help="Count each one-way flight as one segment. A return trip normally equals two segments.",
+            help="A return trip is considered as a separate flight.",
         )
     with calc_middle:
         estimated_project_emissions = planned_segments * planning_factor
