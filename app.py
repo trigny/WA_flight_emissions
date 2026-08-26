@@ -233,129 +233,107 @@ if baseline_abs is not None:
 # -------------------------------------------------------------------
 st.divider()
 st.subheader("Project planning estimate")
-planning_years = list(range(2024, 2031))
-baseline_emissions = (
-    flights[flights["Year"].isin([2023, 2024])]
-    .groupby("Year")["Emissions_tCO2e"].sum().reindex([2023, 2024])
+
+# Planning factors are calculated from the complete, unfiltered 2025 dataset
+# loaded from All Integrated Data. The dashboard year, Team and cabin filters
+# do not affect these reference factors.
+reference_year = 2025
+valid_types = ["Very short haul", "Short haul", "Medium haul", "Long haul"]
+valid_cabins = ["economy", "premiumeconomy", "business"]
+
+planning_reference = flights[
+    flights["Year"].eq(reference_year)
+    & flights["Emissions_tCO2e"].notna()
+    & flights["Flight Type"].isin(valid_types)
+    & flights["Cabin Class"].isin(valid_cabins)
+].copy()
+
+factors = (
+    planning_reference
+    .groupby(["Flight Type", "Cabin Class"])["Emissions_tCO2e"]
+    .agg(mean="mean", records="size", total="sum")
 )
-baseline_fte = (
-    fte[fte["Year"].isin([2023, 2024])]
-    .set_index("Year")["FTE"].reindex([2023, 2024])
+
+labels = {
+    "Very short haul": "Very short haul (<500 km)",
+    "Short haul": "Short haul (500–1,500 km)",
+    "Medium haul": "Medium haul (1,500–4,000 km)",
+    "Long haul": "Long haul (>4,000 km)",
+}
+
+st.caption(
+    "Each factor is the arithmetic mean of Column M (Final_RFI3_tCO2e) for "
+    "all included 2025 rows in All Integrated Data with the selected Column I "
+    "class and Column J flight type. Each input represents a one-way flight segment."
 )
 
-if not (baseline_emissions.notna().all() and baseline_fte.notna().all() and baseline_fte.mean() > 0):
-    st.warning("Valid 2023 and 2024 emissions and FTE data are required for the planning target.")
-else:
-    baseline_per_fte = float(baseline_emissions.mean() / baseline_fte.mean())
-    target_2030 = baseline_per_fte / 2
-    target_step = (target_2030 - baseline_per_fte) / 6
-    yearly_targets = {
-        year: baseline_per_fte + target_step * (year - 2024)
-        for year in planning_years
-    }
+heading = st.columns([2.2, 1, 1, 1, 1.4])
+heading[0].markdown("**Flight distance**")
+heading[1].markdown("**Economy**")
+heading[2].markdown("**Premium economy**")
+heading[3].markdown("**Business**")
+heading[4].markdown("**Estimated tCO₂e**")
 
-    planning_year = st.selectbox(
-        "Target year", planning_years, index=2, key="planning_target_year"
-    )
-    selected_target = yearly_targets[planning_year]
-
-    selected_year_fte = fte.loc[fte["Year"].eq(planning_year), "FTE"].dropna()
-    latest_fte = fte.sort_values("Year")["FTE"].dropna()
-    default_planning_fte = float(selected_year_fte.iloc[0] if not selected_year_fte.empty else latest_fte.iloc[-1])
-    planning_fte = st.number_input(
-        "Planned FTE", min_value=0.1, value=default_planning_fte, step=1.0,
-        help="Flight inputs are totals. Total estimated emissions are divided by this FTE value.",
-    )
-
-    reference_years = sorted(
-        flights.loc[flights["Emissions_tCO2e"].gt(0), "Year"].dropna().unique().tolist()
-    )
-    if not reference_years:
-        st.warning("No positive flight-emission records are available for planning factors.")
-    else:
-        reference_year = 2025 if 2025 in reference_years else max(reference_years)
-        valid_types = ["Very short haul", "Short haul", "Medium haul", "Long haul"]
-        valid_cabins = ["economy", "premiumeconomy", "business"]
-        factors = (
-            flights[
-                flights["Year"].eq(reference_year)
-                & flights["Emissions_tCO2e"].gt(0)
-                & flights["Flight Type"].isin(valid_types)
-                & flights["Cabin Class"].isin(valid_cabins)
-            ]
-            .groupby(["Flight Type", "Cabin Class"])["Emissions_tCO2e"]
-            .agg(["mean", "size"])
-        )
-
-        labels = {
-            "Very short haul": "Very short haul (<500 km)",
-            "Short haul": "Short haul (500–1,500 km)",
-            "Medium haul": "Medium haul (1,500–4,000 km)",
-            "Long haul": "Long haul (>4,000 km)",
-        }
-        st.markdown("#### Planned one-way flights")
-        st.caption(
-            f"Average emission factors are calculated from included {reference_year} flights."
-        )
-        heading = st.columns([2.2, 1, 1, 1, 1.4])
-        heading[0].markdown("**Flight distance**")
-        heading[1].markdown("**Economy**")
-        heading[2].markdown("**Premium economy**")
-        heading[3].markdown("**Business**")
-        heading[4].markdown("**Estimated tCO₂e**")
-
-        planned_total_emissions = 0.0
-        planned_segments = 0
-        unavailable = []
-        for flight_type in valid_types:
-            row = st.columns([2.2, 1, 1, 1, 1.4])
-            row[0].write(labels[flight_type])
-            row_total = 0.0
-            for input_col, cabin in zip(row[1:4], valid_cabins):
-                key = (flight_type, cabin)
-                available = key in factors.index
-                with input_col:
-                    number = st.selectbox(
-                        f"{labels[flight_type]} {cabin}",
-                        range(501),
-                        key=f"plan_{flight_type}_{cabin}",
-                        label_visibility="collapsed",
-                        help=(
-                            f"Total one-way {cabin} segments for the planned FTE."
-                            if available else
-                            f"No {reference_year} emission factor is available."
-                        ),
-                    )
-                planned_segments += number
-                if available:
-                    row_total += number * float(factors.loc[key, "mean"])
-                elif number:
-                    unavailable.append(f"{labels[flight_type]} {cabin}")
-            planned_total_emissions += row_total
-            row[4].write(f"{row_total:.2f}")
-
-        if unavailable:
-            st.warning(
-                "Not included because no reference factor is available: "
-                + ", ".join(unavailable)
+planned_total_emissions = 0.0
+planned_segments = 0
+unavailable = []
+for flight_type in valid_types:
+    row = st.columns([2.2, 1, 1, 1, 1.4])
+    row[0].write(labels[flight_type])
+    row_total = 0.0
+    for input_col, cabin in zip(row[1:4], valid_cabins):
+        key = (flight_type, cabin)
+        available = key in factors.index
+        factor = float(factors.loc[key, "mean"]) if available else None
+        records = int(factors.loc[key, "records"]) if available else 0
+        with input_col:
+            number = st.selectbox(
+                f"{labels[flight_type]} {cabin}",
+                range(501),
+                key=f"plan_{flight_type}_{cabin}",
+                label_visibility="collapsed",
+                help=(
+                    f"2025 mean: {factor:.3f} tCO₂e per segment, based on {records} records."
+                    if available else
+                    "No 2025 reference factor is available for this combination."
+                ),
             )
+        planned_segments += number
+        if available:
+            row_total += number * factor
+        elif number:
+            unavailable.append(f"{labels[flight_type]} {cabin}")
+    planned_total_emissions += row_total
+    row[4].write(f"{row_total:.2f}")
 
-        planned_emissions_per_fte = planned_total_emissions / planning_fte
-        remaining = selected_target - planned_emissions_per_fte
-        share = planned_emissions_per_fte / selected_target if selected_target > 0 else 0
-        r1, r2, r3 = st.columns(3)
-        r1.metric("Estimated emissions", f"{planned_emissions_per_fte:.2f} tCO₂e per FTE")
-        r2.metric(f"{planning_year} target", f"{selected_target:.2f} tCO₂e per FTE")
-        r3.metric(
-            "Remaining allowance" if remaining >= 0 else "Above target by",
-            f"{abs(remaining):.2f} tCO₂e per FTE",
-        )
-        st.progress(min(max(share, 0.0), 1.0))
-        st.caption(f"This configuration uses {share:.0%} of the {planning_year} target.")
-        if remaining >= 0:
-            st.success(f"Within target. Remaining: {remaining:.2f} tCO₂e per FTE.")
-        else:
-            st.error(f"Above target by {abs(remaining):.2f} tCO₂e per FTE.")
+if unavailable:
+    st.warning(
+        "Not included because no 2025 reference factor is available: "
+        + ", ".join(unavailable)
+    )
+
+r1, r2 = st.columns(2)
+r1.metric("Planned one-way flight segments", f"{planned_segments:,}")
+r2.metric("Estimated project emissions", f"{planned_total_emissions:.2f} tCO₂e")
+st.caption(
+    "A return journey normally contains at least two flight segments. This is a planning estimate; "
+    "actual emissions vary with the route and cabin class."
+)
+
+with st.expander("Show 2025 planning factors and record counts"):
+    factor_table = factors.reset_index().rename(
+        columns={
+            "Flight Type": "Flight type",
+            "Cabin Class": "Cabin class",
+            "mean": "Average tCO₂e per segment",
+            "records": "Reference records",
+            "total": "Total reference tCO₂e",
+        }
+    )
+    factor_table["Flight type"] = factor_table["Flight type"].map(labels)
+    factor_table["Average tCO₂e per segment"] = factor_table["Average tCO₂e per segment"].round(3)
+    factor_table["Total reference tCO₂e"] = factor_table["Total reference tCO₂e"].round(2)
+    st.dataframe(factor_table, use_container_width=True, hide_index=True)
 
 st.divider()
 
