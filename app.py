@@ -172,8 +172,7 @@ if not available_years:
 # -------------------------------------------------------------------
 # Header and controls
 # -------------------------------------------------------------------
-st.title("📊 MyClimate Flight Emissions Dashboard")
-st.caption("Reads the Team and Flight_Type fields from the updated Excel workflow.")
+st.title("📊 Wyss Academy Flight Emissions Dashboard")
 
 default_year = workbook_default_year if workbook_default_year in available_years else max(available_years)
 
@@ -261,11 +260,6 @@ labels = {
     "Long haul": "Long haul (>4,000 km)",
 }
 
-st.caption(
-    "Each factor is the arithmetic mean of Column M (Final_RFI3_tCO2e) for "
-    "all included 2025 rows in All Integrated Data with the selected Column I "
-    "class and Column J flight type. Each input represents a one-way flight segment."
-)
 
 heading = st.columns([2.2, 1, 1, 1, 1.4])
 heading[0].markdown("**Flight distance**")
@@ -313,27 +307,9 @@ if unavailable:
     )
 
 r1, r2 = st.columns(2)
-r1.metric("Planned one-way flight segments", f"{planned_segments:,}")
+r1.metric("Planned one-way flight", f"{planned_segments:,}")
 r2.metric("Estimated project emissions", f"{planned_total_emissions:.2f} tCO₂e")
-st.caption(
-    "A return journey normally contains at least two flight segments. This is a planning estimate; "
-    "actual emissions vary with the route and cabin class."
-)
 
-with st.expander("Show 2025 planning factors and record counts"):
-    factor_table = factors.reset_index().rename(
-        columns={
-            "Flight Type": "Flight type",
-            "Cabin Class": "Cabin class",
-            "mean": "Average tCO₂e per segment",
-            "records": "Reference records",
-            "total": "Total reference tCO₂e",
-        }
-    )
-    factor_table["Flight type"] = factor_table["Flight type"].map(labels)
-    factor_table["Average tCO₂e per segment"] = factor_table["Average tCO₂e per segment"].round(3)
-    factor_table["Total reference tCO₂e"] = factor_table["Total reference tCO₂e"].round(2)
-    st.dataframe(factor_table, use_container_width=True, hide_index=True)
 
 st.divider()
 
