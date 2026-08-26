@@ -384,7 +384,6 @@ with right:
         selected.groupby("Teams", as_index=False)
         .agg(Flights=("Emissions_tCO2e", "size"), Emissions_tCO2e=("Emissions_tCO2e", "sum"))
         .sort_values("Emissions_tCO2e", ascending=False)
-        .head(12)
     )
     fig_team = px.bar(
         by_team,
@@ -473,23 +472,23 @@ team_cabin = (
     selected.groupby(["Teams", "Cabin Class"], as_index=False)
     .agg(Flights=("Emissions_tCO2e", "size"), Emissions_tCO2e=("Emissions_tCO2e", "sum"))
 )
-top_teams = (
+team_order = (
     team_cabin.groupby("Teams", as_index=False)["Emissions_tCO2e"]
     .sum()
-    .sort_values("Emissions_tCO2e", ascending=False)
-    .head(12)["Teams"]
+    .sort_values("Emissions_tCO2e", ascending=False)["Teams"]
     .tolist()
 )
-team_cabin_top = team_cabin[team_cabin["Teams"].isin(top_teams)]
 
 fig_stack = px.bar(
-    team_cabin_top,
+    team_cabin,
     x="Teams",
     y="Emissions_tCO2e",
     color="Cabin Class",
     title=f"Cabin class contribution within teams ({selected_year})",
     labels={"Teams": "Teams", "Emissions_tCO2e": "Emissions (tCO₂e)", "Cabin Class": "Cabin class"},
+    category_orders={"Teams": team_order},
 )
+fig_stack.update_xaxes(categoryorder="array", categoryarray=team_order)
 fig_stack.update_layout(height=460, margin=dict(l=20, r=20, t=60, b=100), xaxis_tickangle=-35)
 st.plotly_chart(fig_stack, use_container_width=True)
 
