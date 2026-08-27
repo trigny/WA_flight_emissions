@@ -1,16 +1,15 @@
-# MyClimate Streamlit Dashboard From Original Excel
+# WA Emissions Streamlit Dashboard 
 
-This app keeps the original Excel workbook and reads directly from it each time the dashboard loads.
 
 ## Files
 
 - `app.py`: Streamlit dashboard
-- `MyClimate Methodology Workbook_final (1).xlsx`: original Excel workbook
+- 3 main excel files 
 - `requirements.txt`: Python dependencies
 
 ## How the app uses the workbook
 
-The app reads:
+The app reads from main excel file:
 
 - `All Integrated Data`
 - `FTE Data`
@@ -38,10 +37,8 @@ streamlit run app.py
 
 ## Update the dashboard data
 
-Replace `MyClimate Methodology Workbook_final (1).xlsx` with the updated workbook, keeping the same filename. Then rerun the app or click **Clear cache and reload workbook** in the sidebar.
+...
 
 ## Deploy online
 
 Upload these files to a GitHub repository, then deploy `app.py` on Streamlit Community Cloud.
-
-Important: if the GitHub repository is public, the full Excel workbook will also be public. Use a private repository if the workbook contains sensitive information.
