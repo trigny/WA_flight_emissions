@@ -480,34 +480,64 @@ for flight_type in valid_types:
 if unavailable:
     st.warning("Not included because no all-years reference factor is available: " + ", ".join(unavailable))
 
-planned_per_fte = planned_total_emissions / planned_fte if planned_fte else None
+# FTE-sensitive planning results. Streamlit reruns these calculations whenever
+# the Planned project FTE number input changes.
+planned_per_fte = planned_total_emissions / planned_fte if planned_fte > 0 else None
 target_allowance_per_fte = planning_target_per_fte
-variance_per_fte = (
-    planned_per_fte - target_allowance_per_fte
-    if planned_per_fte is not None and target_allowance_per_fte is not None
+total_target_budget = (
+    target_allowance_per_fte * planned_fte
+    if target_allowance_per_fte is not None and planned_fte > 0
     else None
 )
+remaining_total_allowance = (
+    total_target_budget - planned_total_emissions
+    if total_target_budget is not None
+    else None
+)
+remaining_allowance_per_fte = (
+    target_allowance_per_fte - planned_per_fte
+    if target_allowance_per_fte is not None and planned_per_fte is not None
+    else None
+)
+
 r1, r2, r3, r4 = st.columns(4)
 r1.metric("Planned one-way flights", f"{planned_segments:,}")
 r2.metric("Estimated project emissions", f"{planned_total_emissions:.2f} tCO₂e")
-r3.metric("Estimated emissions per FTE", "n/a" if planned_per_fte is None else f"{planned_per_fte:.2f} tCO₂e/FTE")
+r3.metric(
+    "Estimated emissions per FTE",
+    "n/a" if planned_per_fte is None else f"{planned_per_fte:.2f} tCO₂e/FTE",
+    help="Estimated project emissions divided by the selected planned FTE.",
+)
 r4.metric(
     "Target allowance per FTE",
-    (
-        "n/a"
-        if target_allowance_per_fte is None
-        else f"{target_allowance_per_fte:.2f} tCO₂e/FTE"
-    ),
+    "n/a" if target_allowance_per_fte is None else f"{target_allowance_per_fte:.2f} tCO₂e/FTE",
     delta=(
         None
-        if variance_per_fte is None
-        else f"{variance_per_fte:+.2f} tCO₂e/FTE vs target"
+        if remaining_allowance_per_fte is None
+        else f"{remaining_allowance_per_fte:+.2f} tCO₂e/FTE remaining"
     ),
-    delta_color="inverse",
-    help=(
-        "The target allowance per FTE follows the target pathway for the selected "
-        "planning year. The FTE control changes estimated emissions per FTE."
+    delta_color="normal",
+    help="The year-specific target benchmark. Planned FTE does not change this per-FTE rate.",
+)
+
+# These total metrics make the FTE scenario effect visible even when no flights
+# are selected: increasing FTE increases the total target budget immediately.
+b1, b2 = st.columns(2)
+b1.metric(
+    "Total target budget",
+    "n/a" if total_target_budget is None else f"{total_target_budget:.2f} tCO₂e",
+    help="Target allowance per FTE multiplied by the selected planned FTE.",
+)
+b2.metric(
+    "Remaining total allowance",
+    "n/a" if remaining_total_allowance is None else f"{remaining_total_allowance:.2f} tCO₂e",
+    delta=(
+        None
+        if remaining_total_allowance is None
+        else ("Within target" if remaining_total_allowance >= 0 else f"{abs(remaining_total_allowance):.2f} tCO₂e over target")
     ),
+    delta_color="normal" if remaining_total_allowance is None or remaining_total_allowance >= 0 else "inverse",
+    help="Total target budget minus estimated project emissions.",
 )
 st.caption(
     "Flight factors use the unfiltered mean across all available years for each distance and cabin combination. "
