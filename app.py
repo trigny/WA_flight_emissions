@@ -396,10 +396,8 @@ with control_left:
         key="planning_year",
     )
 
-# The FTE Data sheet is authoritative for years with an entered value:
-# 2023: 76.6, 2024: 92.6, 2025: 94.7, 2026: 96.5.
-# The dropdown retains these reference values, while Custom allows any
-# future or hypothetical FTE scenario without changing the source workbook.
+# The selected planning year determines the default FTE from FTE Data.
+# Users can adjust the scenario directly with the +/- control in steps of 5 FTE.
 fte_reference = (
     fte.dropna(subset=["FTE"])
     .drop_duplicates("Year", keep="last")
@@ -407,45 +405,36 @@ fte_reference = (
     .astype(float)
     .to_dict()
 )
-fte_reference_values = list(dict.fromkeys(float(value) for value in fte_reference.values()))
-default_fte = float(fte_reference.get(planning_year, fte_reference_values[-1]))
-fte_choices = fte_reference_values + ["Custom"]
-with control_middle:
-    fte_choice = st.selectbox(
-        "Planned project FTE",
-        fte_choices,
-        index=fte_choices.index(default_fte),
-        format_func=lambda value: "Custom value" if value == "Custom" else f"{value:.1f}",
-        key=f"planned_project_fte_choice_{planning_year}",
-        help=(
-            "Completed-year defaults come from the FTE Data sheet. "
-            "Choose Custom value for a future or hypothetical scenario."
-        ),
+available_fte_defaults = list(fte_reference.values())
+default_fte = float(
+    fte_reference.get(
+        planning_year,
+        available_fte_defaults[-1] if available_fte_defaults else 1.0,
     )
-
-if fte_choice == "Custom":
+)
+with control_middle:
     planned_fte = st.number_input(
-        "Custom planned project FTE",
+        "Planned project FTE",
         min_value=0.1,
         max_value=1000.0,
         value=default_fte,
-        step=0.1,
+        step=5.0,
         format="%.1f",
-        key=f"planned_project_fte_custom_{planning_year}",
+        key=f"planned_project_fte_{planning_year}",
+        help=(
+            "The default comes from the FTE Data sheet for the selected year. "
+            "Use the minus and plus controls to adjust the scenario by 5 FTE."
+        ),
     )
-else:
-    planned_fte = float(fte_choice)
 
 # The target is not displayed as a standalone card. It is used directly
 # in the year-sensitive Target allowance metric below.
 planning_target_per_fte = target_for_year(planning_year, target_base_value)
 
-reference_year = 2025
 valid_types = ["Very short haul", "Short haul", "Medium haul", "Long haul"]
 valid_cabins = ["economy", "premiumeconomy", "business"]
 planning_reference = flights[
-    flights["Year"].eq(reference_year)
-    & flights["Emissions_tCO2e"].notna()
+    flights["Emissions_tCO2e"].notna()
     & flights["Flight Type"].isin(valid_types)
     & flights["Cabin Class"].isin(valid_cabins)
 ].copy()
@@ -476,8 +465,8 @@ for flight_type in valid_types:
                 f"{labels[flight_type]} {cabin}", range(501),
                 key=f"plan_{flight_type}_{cabin}", label_visibility="collapsed",
                 help=(
-                    f"2025 mean: {factor:.3f} tCO₂e per one-way segment, based on {records} records."
-                    if available else "No 2025 reference factor is available for this combination."
+                    f"All-years mean: {factor:.3f} tCO₂e per one-way segment, based on {records} records."
+                    if available else "No all-years reference factor is available for this combination."
                 ),
             )
         planned_segments += number
@@ -489,27 +478,39 @@ for flight_type in valid_types:
     row[4].write(f"{row_total:.2f}")
 
 if unavailable:
-    st.warning("Not included because no 2025 reference factor is available: " + ", ".join(unavailable))
+    st.warning("Not included because no all-years reference factor is available: " + ", ".join(unavailable))
 
 planned_per_fte = planned_total_emissions / planned_fte if planned_fte else None
-target_budget = planning_target_per_fte * planned_fte if planning_target_per_fte is not None else None
-variance = planned_total_emissions - target_budget if target_budget is not None else None
+target_allowance_per_fte = planning_target_per_fte
+variance_per_fte = (
+    planned_per_fte - target_allowance_per_fte
+    if planned_per_fte is not None and target_allowance_per_fte is not None
+    else None
+)
 r1, r2, r3, r4 = st.columns(4)
 r1.metric("Planned one-way flights", f"{planned_segments:,}")
 r2.metric("Estimated project emissions", f"{planned_total_emissions:.2f} tCO₂e")
 r3.metric("Estimated emissions per FTE", "n/a" if planned_per_fte is None else f"{planned_per_fte:.2f} tCO₂e/FTE")
 r4.metric(
-    f"{planning_year} target allowance",
-    "n/a" if target_budget is None else f"{target_budget:.2f} tCO₂e",
-    delta=None if variance is None else f"{variance:+.2f} tCO₂e vs target",
+    "Target allowance per FTE",
+    (
+        "n/a"
+        if target_allowance_per_fte is None
+        else f"{target_allowance_per_fte:.2f} tCO₂e/FTE"
+    ),
+    delta=(
+        None
+        if variance_per_fte is None
+        else f"{variance_per_fte:+.2f} tCO₂e/FTE vs target"
+    ),
     delta_color="inverse",
     help=(
-        "Selected-year emissions target per FTE multiplied by the selected FTE. "
-        "Both the planning year and the FTE scenario update this allowance."
+        "The target allowance per FTE follows the target pathway for the selected "
+        "planning year. The FTE control changes estimated emissions per FTE."
     ),
 )
 st.caption(
-    "Flight factors use the unfiltered 2025 mean for each distance and cabin combination. "
+    "Flight factors use the unfiltered mean across all available years for each distance and cabin combination. "
     "The per-FTE target follows a linear pathway from the 2024 actual value to a 50% reduction in 2030."
 )
 
