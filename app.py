@@ -1391,7 +1391,446 @@ else:
 # Restored flight-distance pie charts
 # -------------------------------------------------------------------
 st.divider()
+
 st.subheader(f"Flights and emissions by flight distance ({selected_year})")
+
+# -------------------------------------------------------------------
+# Dashboard chart analysis
+# -------------------------------------------------------------------
+st.divider()
+
+st.subheader("Dashboard chart analysis")
+
+
+# -------------------------------------------------------------------
+# Monthly emissions, cabin-class emissions, and team emissions
+# -------------------------------------------------------------------
+chart_left, chart_middle, chart_right = st.columns(
+    [
+        1.2,
+        1,
+        1,
+    ]
+)
+
+
+# -------------------------------------------------------------------
+# Emissions over time
+# -------------------------------------------------------------------
+with chart_left:
+    monthly_emissions = (
+        selected.dropna(
+            subset=[
+                "Date",
+            ]
+        )
+        .groupby(
+            [
+                "Month",
+                "Month Name",
+            ],
+            as_index=False,
+        )
+        .agg(
+            Emissions=(
+                "Emissions",
+                "sum",
+            )
+        )
+        .sort_values(
+            "Month"
+        )
+    )
+
+    month_order = [
+        "Jan",
+        "Feb",
+        "Mar",
+        "Apr",
+        "May",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep",
+        "Oct",
+        "Nov",
+        "Dec",
+    ]
+
+    monthly_emissions["Month Name"] = pd.Categorical(
+        monthly_emissions["Month Name"],
+        categories=month_order,
+        ordered=True,
+    )
+
+    monthly_emissions = monthly_emissions.sort_values(
+        "Month Name"
+    )
+
+    monthly_figure = px.line(
+        monthly_emissions,
+        x="Month Name",
+        y="Emissions",
+        markers=True,
+        title=f"Emissions over time ({selected_year})",
+        labels={
+            "Month Name": "Month",
+            "Emissions": "Emissions (tCO₂e)",
+        },
+    )
+
+    monthly_figure.update_traces(
+        line=dict(
+            color="#0B70C9",
+            width=2,
+        ),
+        marker=dict(
+            color="#0B70C9",
+            size=7,
+        ),
+        hovertemplate=(
+            "<b>%{x}</b><br>"
+            "Emissions: %{y:.2f} tCO₂e"
+            "<extra></extra>"
+        ),
+    )
+
+    monthly_figure.update_xaxes(
+        categoryorder="array",
+        categoryarray=month_order,
+        title="Month",
+    )
+
+    monthly_figure.update_yaxes(
+        title="Emissions (tCO₂e)",
+        rangemode="tozero",
+    )
+
+    monthly_figure.update_layout(
+        height=420,
+        margin=dict(
+            l=20,
+            r=20,
+            t=60,
+            b=40,
+        ),
+        showlegend=False,
+    )
+
+    st.plotly_chart(
+        monthly_figure,
+        use_container_width=True,
+    )
+
+
+# -------------------------------------------------------------------
+# Emissions by cabin class
+# -------------------------------------------------------------------
+with chart_middle:
+    cabin_order = [
+        "economy",
+        "premiumeconomy",
+        "business",
+        "first",
+        "unknown",
+    ]
+
+    cabin_emissions = (
+        selected.groupby(
+            "Cabin",
+            as_index=False,
+        )
+        .agg(
+            Flights=(
+                "Emissions",
+                "size",
+            ),
+            Emissions=(
+                "Emissions",
+                "sum",
+            ),
+        )
+    )
+
+    cabin_emissions["Cabin"] = pd.Categorical(
+        cabin_emissions["Cabin"],
+        categories=cabin_order,
+        ordered=True,
+    )
+
+    cabin_emissions = cabin_emissions.sort_values(
+        "Cabin"
+    )
+
+    cabin_figure = px.bar(
+        cabin_emissions,
+        x="Cabin",
+        y="Emissions",
+        text="Emissions",
+        title=f"Emissions by cabin class ({selected_year})",
+        labels={
+            "Cabin": "Cabin class",
+            "Emissions": "Emissions (tCO₂e)",
+        },
+        custom_data=[
+            "Flights",
+        ],
+    )
+
+    cabin_figure.update_traces(
+        marker_color="#0B70C9",
+        texttemplate="%{text:.1f}",
+        textposition="inside",
+        insidetextanchor="middle",
+        textfont=dict(
+            color="white",
+        ),
+        hovertemplate=(
+            "<b>%{x}</b><br>"
+            "Emissions: %{y:.2f} tCO₂e<br>"
+            "Flight records: %{customdata,.0f}"
+            "<extra></extra>"
+        ),
+    )
+
+    cabin_figure.update_xaxes(
+        categoryorder="array",
+        categoryarray=cabin_order,
+        title="Cabin class",
+        tickangle=-25,
+    )
+
+    cabin_figure.update_yaxes(
+        title="Emissions (tCO₂e)",
+        rangemode="tozero",
+    )
+
+    cabin_figure.update_layout(
+        height=420,
+        margin=dict(
+            l=20,
+            r=20,
+            t=60,
+            b=70,
+        ),
+        showlegend=False,
+    )
+
+    st.plotly_chart(
+        cabin_figure,
+        use_container_width=True,
+    )
+
+
+# -------------------------------------------------------------------
+# Emissions by team
+# -------------------------------------------------------------------
+with chart_right:
+    team_emissions = (
+        selected.groupby(
+            "Team",
+            as_index=False,
+        )
+        .agg(
+            Flights=(
+                "Emissions",
+                "size",
+            ),
+            Emissions=(
+                "Emissions",
+                "sum",
+            ),
+        )
+        .sort_values(
+            "Emissions",
+            ascending=False,
+        )
+    )
+
+    team_order = team_emissions[
+        "Team"
+    ].tolist()
+
+    team_figure = px.bar(
+        team_emissions,
+        x="Team",
+        y="Emissions",
+        text="Emissions",
+        title=f"Emissions by teams ({selected_year})",
+        labels={
+            "Team": "Teams",
+            "Emissions": "Emissions (tCO₂e)",
+        },
+        custom_data=[
+            "Flights",
+        ],
+    )
+
+    team_figure.update_traces(
+        marker_color="#0B70C9",
+        texttemplate="%{text:.1f}",
+        textposition="inside",
+        textfont=dict(
+            color="white",
+        ),
+        hovertemplate=(
+            "<b>%{x}</b><br>"
+            "Emissions: %{y:.2f} tCO₂e<br>"
+            "Flight records: %{customdata,.0f}"
+            "<extra></extra>"
+        ),
+    )
+
+    team_figure.update_xaxes(
+        categoryorder="array",
+        categoryarray=team_order,
+        title="Teams",
+        tickangle=-35,
+    )
+
+    team_figure.update_yaxes(
+        title="Emissions (tCO₂e)",
+        rangemode="tozero",
+    )
+
+    team_figure.update_layout(
+        height=420,
+        margin=dict(
+            l=20,
+            r=20,
+            t=60,
+            b=120,
+        ),
+        showlegend=False,
+    )
+
+    st.plotly_chart(
+        team_figure,
+        use_container_width=True,
+    )
+
+
+# -------------------------------------------------------------------
+# Cabin-class contribution within teams
+# -------------------------------------------------------------------
+team_cabin_emissions = (
+    selected.groupby(
+        [
+            "Team",
+            "Cabin",
+        ],
+        as_index=False,
+    )
+    .agg(
+        Flights=(
+            "Emissions",
+            "size",
+        ),
+        Emissions=(
+            "Emissions",
+            "sum",
+        ),
+    )
+)
+
+team_totals = (
+    team_cabin_emissions.groupby(
+        "Team",
+        as_index=False,
+    )
+    .agg(
+        Total_Emissions=(
+            "Emissions",
+            "sum",
+        )
+    )
+    .sort_values(
+        "Total_Emissions",
+        ascending=False,
+    )
+)
+
+stacked_team_order = team_totals[
+    "Team"
+].tolist()
+
+cabin_colors = {
+    "economy": "#5AAAE6",
+    "premiumeconomy": "#F2B84B",
+    "business": "#E83B3B",
+    "first": "#8259C8",
+    "unknown": "#A6A6A6",
+}
+
+team_cabin_figure = px.bar(
+    team_cabin_emissions,
+    x="Team",
+    y="Emissions",
+    color="Cabin",
+    title=(
+        "Cabin class contribution within teams "
+        f"({selected_year})"
+    ),
+    labels={
+        "Team": "Teams",
+        "Emissions": "Emissions (tCO₂e)",
+        "Cabin": "Cabin class",
+    },
+    category_orders={
+        "Team": stacked_team_order,
+        "Cabin": cabin_order,
+    },
+    color_discrete_map=cabin_colors,
+    custom_data=[
+        "Flights",
+    ],
+)
+
+team_cabin_figure.update_traces(
+    hovertemplate=(
+        "<b>%{x}</b><br>"
+        "Cabin class: %{fullData.name}<br>"
+        "Emissions: %{y:.2f} tCO₂e<br>"
+        "Flight records: %{customdata,.0f}"
+        "<extra></extra>"
+    ),
+)
+
+team_cabin_figure.update_xaxes(
+    categoryorder="array",
+    categoryarray=stacked_team_order,
+    title="Teams",
+    tickangle=-35,
+)
+
+team_cabin_figure.update_yaxes(
+    title="Emissions (tCO₂e)",
+    rangemode="tozero",
+)
+
+team_cabin_figure.update_layout(
+    barmode="stack",
+    height=500,
+    margin=dict(
+        l=20,
+        r=20,
+        t=60,
+        b=130,
+    ),
+    legend=dict(
+        title="Cabin class",
+        orientation="v",
+        yanchor="top",
+        y=1,
+        xanchor="left",
+        x=1.01,
+    ),
+)
+
+st.plotly_chart(
+    team_cabin_figure,
+    use_container_width=True,
+)
 
 flight_type_order = [
     "Very short haul (<500 km)",
