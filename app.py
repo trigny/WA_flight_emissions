@@ -873,10 +873,40 @@ def load_data(
         .str.lower()
     )
 
+    # Clean the team/category field.
     data["Team"] = clean_series(
         data["Team"],
         "External",
     )
+
+    # Group Guest categories and WA Associate under External.
+    #
+    # startswith("guest") captures:
+    # - Guest
+    # - Guest - Profile
+    # - Guest - No Profile
+    #
+    # casefold() makes the comparison case-insensitive.
+    team_normalized = (
+        data["Team"]
+        .astype(str)
+        .str.strip()
+        .str.casefold()
+    )
+
+    external_team_mask = (
+        team_normalized.str.startswith(
+            "guest"
+        )
+        | team_normalized.eq(
+            "wa associate"
+        )
+    )
+
+    data.loc[
+        external_team_mask,
+        "Team",
+    ] = "External"
 
     data["Flight Type"] = (
         data["Flight_Type"]
@@ -1405,10 +1435,9 @@ st.subheader("Dashboard chart analysis")
 # -------------------------------------------------------------------
 # Monthly emissions, cabin-class emissions, and team emissions
 # -------------------------------------------------------------------
-chart_left, chart_middle, chart_right = st.columns(
+chart_left, chart_middle = st.columns(
     [
         1.2,
-        1,
         1,
     ]
 )
@@ -1618,94 +1647,6 @@ with chart_middle:
 
     st.plotly_chart(
         cabin_figure,
-        use_container_width=True,
-    )
-
-
-# -------------------------------------------------------------------
-# Emissions by team
-# -------------------------------------------------------------------
-with chart_right:
-    team_emissions = (
-        selected.groupby(
-            "Team",
-            as_index=False,
-        )
-        .agg(
-            Flights=(
-                "Emissions",
-                "size",
-            ),
-            Emissions=(
-                "Emissions",
-                "sum",
-            ),
-        )
-        .sort_values(
-            "Emissions",
-            ascending=False,
-        )
-    )
-
-    team_order = team_emissions[
-        "Team"
-    ].tolist()
-
-    team_figure = px.bar(
-        team_emissions,
-        x="Team",
-        y="Emissions",
-        text="Emissions",
-        title=f"Emissions by teams ({selected_year})",
-        labels={
-            "Team": "Teams",
-            "Emissions": "Emissions (tCO₂e)",
-        },
-        custom_data=[
-            "Flights",
-        ],
-    )
-
-    team_figure.update_traces(
-        marker_color="#0B70C9",
-        texttemplate="%{text:.1f}",
-        textposition="inside",
-        textfont=dict(
-            color="white",
-        ),
-        hovertemplate=(
-            "<b>%{x}</b><br>"
-            "Emissions: %{y:.2f} tCO₂e<br>"
-            "Flight records: %{customdata,.0f}"
-            "<extra></extra>"
-        ),
-    )
-
-    team_figure.update_xaxes(
-        categoryorder="array",
-        categoryarray=team_order,
-        title="Teams",
-        tickangle=-35,
-    )
-
-    team_figure.update_yaxes(
-        title="Emissions (tCO₂e)",
-        rangemode="tozero",
-    )
-
-    team_figure.update_layout(
-        height=420,
-        margin=dict(
-            l=20,
-            r=20,
-            t=60,
-            b=120,
-        ),
-        showlegend=False,
-    )
-
-    st.plotly_chart(
-        team_figure,
         use_container_width=True,
     )
 
