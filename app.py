@@ -6,84 +6,332 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-st.set_page_config(page_title="MyClimate Dashboard", page_icon="📊", layout="wide")
 
+st.set_page_config(
+    page_title="MyClimate Dashboard",
+    page_icon="📊",
+    layout="wide",
+)
+
+
+# -------------------------------------------------------------------
+# Repository files
+# -------------------------------------------------------------------
 BASE = Path(__file__).resolve().parent
+
 EXCEL_FILE = BASE / "Flight Emissions Dashboard.xlsx"
 CUSTOM_FIELDS_FILE = BASE / "Custom_Fields_2026-06.xlsx"
-PROJECT_OPTIONS_FILE = BASE / "Custom field options_new.csv"
 
+# Project numbers valid through 2025.
+PROJECT_OPTIONS_FILE = BASE / "Custom field options.csv"
+
+# Project numbers valid from 2026 onward.
+PROJECT_OPTIONS_2026_FILE = BASE / "Custom field options_2026.xlsx"
+
+
+# -------------------------------------------------------------------
+# Target pathway
+# -------------------------------------------------------------------
 TARGET_BASE_YEAR = 2024
 TARGET_YEAR = 2030
 TARGET_REDUCTION = 0.50
 
 
+# -------------------------------------------------------------------
+# General helper functions
+# -------------------------------------------------------------------
 def clean_key(value):
+    """Convert a source value into a clean matching key."""
     if pd.isna(value):
         return ""
+
     value = str(value).strip()
-    return "" if value.lower() in {"", "0", "0.0", "nan", "none", "<na>"} else value
+
+    if value.lower() in {
+        "",
+        "0",
+        "0.0",
+        "nan",
+        "none",
+        "<na>",
+    }:
+        return ""
+
+    return value
 
 
 def clean_series(series, blank="Unassigned"):
+    """Clean a pandas Series and replace empty values with a label."""
     result = series.fillna("").astype(str).str.strip()
-    result = result.replace({"0": "", "0.0": "", "nan": "", "None": "", "<NA>": ""})
-    return result.mask(result.eq(""), blank)
+
+    result = result.replace(
+        {
+            "0": "",
+            "0.0": "",
+            "nan": "",
+            "None": "",
+            "<NA>": "",
+        }
+    )
+
+    return result.mask(
+        result.eq(""),
+        blank,
+    )
 
 
 def unique_map(frame, key, value):
-    data = frame[[key, value]].copy()
+    """
+    Create a mapping only when one identifier corresponds to exactly
+    one distinct project value.
+    """
+    data = frame[
+        [
+            key,
+            value,
+        ]
+    ].copy()
+
     data[key] = data[key].map(clean_key)
     data[value] = data[value].map(clean_key)
-    data = data[(data[key] != "") & (data[value] != "")]
-    grouped = data.groupby(key)[value].agg(lambda values: sorted(set(values)))
-    return {key_value: values[0] for key_value, values in grouped.items() if len(values) == 1}
+
+    data = data[
+        (data[key] != "")
+        & (data[value] != "")
+    ]
+
+    grouped = (
+        data.groupby(key)[value]
+        .agg(
+            lambda values: sorted(
+                set(values)
+            )
+        )
+    )
+
+    return {
+        key_value: values[0]
+        for key_value, values in grouped.items()
+        if len(values) == 1
+    }
 
 
 def canonical_project(value, valid_codes):
+    """
+    Validate a project number against the applicable project list.
+
+    If a value contains an SP suffix, such as 2.1.4-SP1, the parent
+    project number is accepted only when the parent exists in the
+    applicable project list.
+    """
     code = clean_key(value)
+
     if code in valid_codes:
         return code
-    parent = re.sub(r"-SP\d+$", "", code, flags=re.IGNORECASE)
-    return parent if parent in valid_codes else ""
+
+    parent = re.sub(
+        r"-SP\d+$",
+        "",
+        code,
+        flags=re.IGNORECASE,
+    )
+
+    if parent in valid_codes:
+        return parent
+
+    return ""
 
 
 def target_for_year(year, base_value):
-    """2024 actual, declining linearly to exactly 50% lower in 2030."""
+    """
+    Calculate the annual emissions-per-FTE target.
+
+    The pathway starts from the 2024 actual value and declines
+    linearly to a 50 percent reduction in 2030.
+    """
     if base_value is None or pd.isna(base_value):
         return None
+
     if year <= TARGET_BASE_YEAR:
         return float(base_value)
-    target_2030 = float(base_value) * (1.0 - TARGET_REDUCTION)
+
+    target_2030 = float(base_value) * (
+        1.0 - TARGET_REDUCTION
+    )
+
     if year >= TARGET_YEAR:
         return target_2030
-    fraction = (year - TARGET_BASE_YEAR) / (TARGET_YEAR - TARGET_BASE_YEAR)
-    return float(base_value) + (target_2030 - float(base_value)) * fraction
+
+    fraction = (
+        year - TARGET_BASE_YEAR
+    ) / (
+        TARGET_YEAR - TARGET_BASE_YEAR
+    )
+
+    return float(base_value) + (
+        target_2030 - float(base_value)
+    ) * fraction
 
 
-@st.cache_data(show_spinner="Reading repository files...")
-def load_data(workbook_mtime, custom_mtime, options_mtime):
-    all_data = pd.read_excel(EXCEL_FILE, sheet_name="All Integrated Data", engine="openpyxl")
+def prepare_project_options(
+    option_data,
+    option_file,
+):
+    """
+    Validate and standardize one project-options dataset.
+    """
+    option_data = option_data.copy()
+
+    option_data.columns = (
+        option_data.columns
+        .astype(str)
+        .str.strip()
+    )
+
+    required_columns = {
+        "Name",
+        "Description",
+    }
+
+    missing_columns = required_columns.difference(
+        option_data.columns
+    )
+
+    if missing_columns:
+        raise ValueError(
+            f"{option_file.name} is missing required columns: "
+            f"{sorted(missing_columns)}"
+        )
+
+    option_data["Name"] = (
+        option_data["Name"]
+        .map(clean_key)
+    )
+
+    option_data["Description"] = (
+        option_data["Description"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+    )
+
+    option_data = (
+        option_data[
+            option_data["Name"] != ""
+        ]
+        .drop_duplicates(
+            subset="Name",
+            keep="first",
+        )
+        .copy()
+    )
+
+    return option_data
+
+
+# -------------------------------------------------------------------
+# Load and integrate the repository data
+# -------------------------------------------------------------------
+@st.cache_data(
+    show_spinner="Reading repository files..."
+)
+def load_data(
+    workbook_mtime,
+    custom_mtime,
+    options_mtime,
+    options_2026_mtime,
+):
+    """
+    Load the source files and assign a validated project number
+    according to the year of each individual flight record.
+
+    The timestamp parameters are used by Streamlit to invalidate
+    the cache when any source file changes.
+    """
+
+    # ---------------------------------------------------------------
+    # Load the source tables
+    # ---------------------------------------------------------------
+    all_data = pd.read_excel(
+        EXCEL_FILE,
+        sheet_name="All Integrated Data",
+        engine="openpyxl",
+    )
+
     traveler = pd.read_excel(
-        EXCEL_FILE, sheet_name="Traveler Manifest", header=8, engine="openpyxl"
+        EXCEL_FILE,
+        sheet_name="Traveler Manifest",
+        header=8,
+        engine="openpyxl",
     )
+
     legacy = pd.read_excel(
-        EXCEL_FILE, sheet_name="Legacy MyClimate Import", engine="openpyxl"
+        EXCEL_FILE,
+        sheet_name="Legacy MyClimate Import",
+        engine="openpyxl",
     )
-    fte = pd.read_excel(EXCEL_FILE, sheet_name="FTE Data", engine="openpyxl")
-    custom = pd.read_excel(CUSTOM_FIELDS_FILE, header=6, engine="openpyxl")
-    options = pd.read_csv(PROJECT_OPTIONS_FILE, dtype=str)
 
-    options.columns = options.columns.astype(str).str.strip()
-    if not {"Name", "Description"}.issubset(options.columns):
-        raise ValueError("Project options CSV requires Name and Description columns.")
+    fte = pd.read_excel(
+        EXCEL_FILE,
+        sheet_name="FTE Data",
+        engine="openpyxl",
+    )
 
-    options["Name"] = options["Name"].map(clean_key)
-    options["Description"] = options["Description"].fillna("").astype(str).str.strip()
-    options = options[options["Name"] != ""].drop_duplicates("Name")
-    valid_codes = set(options["Name"])
-    descriptions = options.set_index("Name")["Description"].to_dict()
+    custom = pd.read_excel(
+        CUSTOM_FIELDS_FILE,
+        header=6,
+        engine="openpyxl",
+    )
 
+    # ---------------------------------------------------------------
+    # Load both project-option lists
+    # ---------------------------------------------------------------
+    options = pd.read_csv(
+        PROJECT_OPTIONS_FILE,
+        dtype=str,
+    )
+
+    options_2026 = pd.read_excel(
+        PROJECT_OPTIONS_2026_FILE,
+        dtype=str,
+        engine="openpyxl",
+    )
+
+    options = prepare_project_options(
+        options,
+        PROJECT_OPTIONS_FILE,
+    )
+
+    options_2026 = prepare_project_options(
+        options_2026,
+        PROJECT_OPTIONS_2026_FILE,
+    )
+
+    # Project codes and descriptions valid through 2025.
+    valid_codes = set(
+        options["Name"]
+    )
+
+    descriptions = (
+        options
+        .set_index("Name")["Description"]
+        .to_dict()
+    )
+
+    # Project codes and descriptions valid from 2026 onward.
+    valid_codes_2026 = set(
+        options_2026["Name"]
+    )
+
+    descriptions_2026 = (
+        options_2026
+        .set_index("Name")["Description"]
+        .to_dict()
+    )
+
+    # ---------------------------------------------------------------
+    # Validate the Custom Fields structure
+    # ---------------------------------------------------------------
     required_custom = {
         "Custom Question",
         "Travel Data Answer",
@@ -92,10 +340,20 @@ def load_data(workbook_mtime, custom_mtime, options_mtime):
         "Spotnana PNR ID",
         "Confirmation Number",
     }
-    missing_custom = required_custom.difference(custom.columns)
-    if missing_custom:
-        raise ValueError(f"Missing Custom Fields columns: {sorted(missing_custom)}")
 
+    missing_custom = required_custom.difference(
+        custom.columns
+    )
+
+    if missing_custom:
+        raise ValueError(
+            "Missing Custom Fields columns: "
+            f"{sorted(missing_custom)}"
+        )
+
+    # ---------------------------------------------------------------
+    # Extract raw project answers from Custom Fields
+    # ---------------------------------------------------------------
     project_rows = custom[
         custom["Custom Question"]
         .fillna("")
@@ -103,69 +361,295 @@ def load_data(workbook_mtime, custom_mtime, options_mtime):
         .str.strip()
         .eq("(UD15) Project Codes")
     ].copy()
-    project_rows["Project"] = project_rows["Travel Data Answer"].map(
-        lambda value: canonical_project(value, valid_codes)
-    )
-    project_rows["TX"] = (
-        project_rows["Travel Data Transaction Key"]
-        .map(clean_key)
-        .str.replace(r"-Q\d+$", "", regex=True)
-    )
-    project_rows["TRIP"] = project_rows["Trip ID"].map(clean_key)
-    project_rows["PNR"] = project_rows["Spotnana PNR ID"].map(clean_key)
-    project_rows["TICKET"] = project_rows["Confirmation Number"].map(clean_key)
-    project_rows = project_rows[project_rows["Project"] != ""]
 
+    # Important:
+    # Keep the raw project value here. Do not validate it against
+    # either project list until the year of the integrated flight
+    # record is known.
+    project_rows["Project"] = (
+        project_rows["Travel Data Answer"]
+        .map(clean_key)
+    )
+
+    project_rows["TX"] = (
+        project_rows[
+            "Travel Data Transaction Key"
+        ]
+        .map(clean_key)
+        .str.replace(
+            r"-Q\d+$",
+            "",
+            regex=True,
+        )
+    )
+
+    project_rows["TRIP"] = (
+        project_rows["Trip ID"]
+        .map(clean_key)
+    )
+
+    project_rows["PNR"] = (
+        project_rows["Spotnana PNR ID"]
+        .map(clean_key)
+    )
+
+    project_rows["TICKET"] = (
+        project_rows["Confirmation Number"]
+        .map(clean_key)
+    )
+
+    project_rows = project_rows[
+        project_rows["Project"] != ""
+    ].copy()
+
+    # A broad identifier is used only when all project records for
+    # that identifier agree on one raw project value.
     project_maps = {
-        key: unique_map(project_rows, key, "Project")
-        for key in ["TX", "TRIP", "PNR", "TICKET"]
+        key: unique_map(
+            project_rows,
+            key,
+            "Project",
+        )
+        for key in [
+            "TX",
+            "TRIP",
+            "PNR",
+            "TICKET",
+        ]
     }
 
+    # ---------------------------------------------------------------
+    # Match Traveler Manifest rows to raw Custom Fields projects
+    # ---------------------------------------------------------------
     def traveler_project(row):
         candidates = [
-            project_maps["TX"].get(clean_key(row.get("Transaction Key")), ""),
-            project_maps["PNR"].get(clean_key(row.get("Spotnana PNR ID")), ""),
-            project_maps["TICKET"].get(clean_key(row.get("Ticket Number")), ""),
-            project_maps["TRIP"].get(clean_key(row.get("Trip ID")), ""),
+            project_maps["TX"].get(
+                clean_key(
+                    row.get("Transaction Key")
+                ),
+                "",
+            ),
+            project_maps["PNR"].get(
+                clean_key(
+                    row.get("Spotnana PNR ID")
+                ),
+                "",
+            ),
+            project_maps["TICKET"].get(
+                clean_key(
+                    row.get("Ticket Number")
+                ),
+                "",
+            ),
+            project_maps["TRIP"].get(
+                clean_key(
+                    row.get("Trip ID")
+                ),
+                "",
+            ),
         ]
-        return next((candidate for candidate in candidates if candidate), "")
 
-    traveler["Resolved Project"] = traveler.apply(traveler_project, axis=1)
-    legacy["Resolved Project"] = legacy["Projektnummer"].map(
-        lambda value: canonical_project(value, valid_codes)
+        return next(
+            (
+                candidate
+                for candidate in candidates
+                if candidate
+            ),
+            "",
+        )
+
+    traveler["Resolved Project"] = (
+        traveler.apply(
+            traveler_project,
+            axis=1,
+        )
     )
 
+    # Keep the raw legacy project value until the integrated
+    # flight record's year is known.
+    legacy["Resolved Project"] = (
+        legacy["Projektnummer"]
+        .map(clean_key)
+    )
+
+    # ---------------------------------------------------------------
+    # Transfer the raw project value to All Integrated Data
+    # ---------------------------------------------------------------
     def integrated_project(row):
         try:
-            source_index = int(float(row["Calc_or_Source_Row"])) - 2
-        except (ValueError, TypeError, KeyError):
+            source_index = int(
+                float(
+                    row["Calc_or_Source_Row"]
+                )
+            ) - 2
+        except (
+            ValueError,
+            TypeError,
+            KeyError,
+        ):
             return ""
 
-        source = clean_key(row.get("Record_Source"))
-        if source == "Traveler Manifest" and 0 <= source_index < len(traveler):
-            return clean_key(traveler.iloc[source_index]["Resolved Project"])
-        if source == "Legacy MyClimate Import" and 0 <= source_index < len(legacy):
-            return clean_key(legacy.iloc[source_index]["Resolved Project"])
+        source = clean_key(
+            row.get("Record_Source")
+        )
+
+        if (
+            source == "Traveler Manifest"
+            and 0 <= source_index < len(traveler)
+        ):
+            return clean_key(
+                traveler.iloc[source_index][
+                    "Resolved Project"
+                ]
+            )
+
+        if (
+            source == "Legacy MyClimate Import"
+            and 0 <= source_index < len(legacy)
+        ):
+            return clean_key(
+                legacy.iloc[source_index][
+                    "Resolved Project"
+                ]
+            )
+
         return ""
 
-    all_data["Project Number"] = all_data.apply(integrated_project, axis=1)
-    all_data["Project Description"] = (
-        all_data["Project Number"].map(descriptions).fillna("")
+    all_data["Project Number"] = (
+        all_data.apply(
+            integrated_project,
+            axis=1,
+        )
     )
 
+    # The year must be numeric before the applicable project list
+    # can be selected.
+    all_data["Year"] = pd.to_numeric(
+        all_data["Year"],
+        errors="coerce",
+    )
+
+    # ---------------------------------------------------------------
+    # Select project resources according to each flight's year
+    # ---------------------------------------------------------------
+    def project_resources_for_year(year):
+        """
+        Return project codes and descriptions applicable to
+        one individual flight year.
+        """
+        if (
+            pd.notna(year)
+            and int(year) >= 2026
+        ):
+            return (
+                valid_codes_2026,
+                descriptions_2026,
+            )
+
+        return (
+            valid_codes,
+            descriptions,
+        )
+
+    def validate_project_for_year(row):
+        """
+        Validate the matched raw project value against the
+        project list applicable to the flight year.
+        """
+        year_codes, _ = (
+            project_resources_for_year(
+                row["Year"]
+            )
+        )
+
+        return canonical_project(
+            row["Project Number"],
+            year_codes,
+        )
+
+    all_data["Project Number"] = (
+        all_data.apply(
+            validate_project_for_year,
+            axis=1,
+        )
+    )
+
+    def describe_project_for_year(row):
+        """
+        Retrieve the project description from the same list
+        used to validate the project number.
+        """
+        _, year_descriptions = (
+            project_resources_for_year(
+                row["Year"]
+            )
+        )
+
+        return year_descriptions.get(
+            row["Project Number"],
+            "",
+        )
+
+    all_data["Project Description"] = (
+        all_data.apply(
+            describe_project_for_year,
+            axis=1,
+        )
+    )
+
+    # ---------------------------------------------------------------
+    # Prepare the final flight dataset
+    # ---------------------------------------------------------------
     data = all_data[
-        all_data["Include_Final"].astype(str).str.strip().str.lower().eq("yes")
+        all_data["Include_Final"]
+        .astype(str)
+        .str.strip()
+        .str.lower()
+        .eq("yes")
     ].copy()
-    data["Date"] = pd.to_datetime(data["Date"], errors="coerce")
-    data["Year"] = pd.to_numeric(data["Year"], errors="coerce")
-    data = data.dropna(subset=["Year"])
-    data["Year"] = data["Year"].astype(int)
+
+    data["Date"] = pd.to_datetime(
+        data["Date"],
+        errors="coerce",
+    )
+
+    data["Year"] = pd.to_numeric(
+        data["Year"],
+        errors="coerce",
+    )
+
+    data = data.dropna(
+        subset=["Year"]
+    )
+
+    data["Year"] = (
+        data["Year"]
+        .astype(int)
+    )
+
     data["Emissions"] = pd.to_numeric(
-        data["Final_RFI3_tCO2e"], errors="coerce"
+        data["Final_RFI3_tCO2e"],
+        errors="coerce",
     ).fillna(0)
-    data["Distance"] = pd.to_numeric(data["Distance_km"], errors="coerce").fillna(0)
-    data["Cabin"] = clean_series(data["Class"], "Unknown").str.lower()
-    data["Team"] = clean_series(data["Team"], "External")
+
+    data["Distance"] = pd.to_numeric(
+        data["Distance_km"],
+        errors="coerce",
+    ).fillna(0)
+
+    data["Cabin"] = (
+        clean_series(
+            data["Class"],
+            "Unknown",
+        )
+        .str.lower()
+    )
+
+    data["Team"] = clean_series(
+        data["Team"],
+        "External",
+    )
+
     data["Flight Type"] = (
         data["Flight_Type"]
         .fillna("")
@@ -174,96 +658,286 @@ def load_data(workbook_mtime, custom_mtime, options_mtime):
         .str.lower()
         .replace(
             {
-                "very_short_haul": "Very short haul",
-                "short_haul": "Short haul",
-                "medium_haul": "Medium haul",
-                "long_haul": "Long haul",
+                "very_short_haul": (
+                    "Very short haul"
+                ),
+                "short_haul": (
+                    "Short haul"
+                ),
+                "medium_haul": (
+                    "Medium haul"
+                ),
+                "long_haul": (
+                    "Long haul"
+                ),
             }
         )
     )
-    data["Project Number"] = clean_series(data["Project Number"], "Unassigned")
-    data["Month"] = data["Date"].dt.month
-    data["Month Name"] = data["Date"].dt.strftime("%b")
 
-    fte["Year"] = pd.to_numeric(fte["Year"], errors="coerce")
-    fte["FTE"] = pd.to_numeric(fte["FTE"], errors="coerce")
-    fte = fte.dropna(subset=["Year"])
-    fte["Year"] = fte["Year"].astype(int)
+    data["Project Number"] = clean_series(
+        data["Project Number"],
+        "Unassigned",
+    )
+
+    data["Month"] = (
+        data["Date"]
+        .dt.month
+    )
+
+    data["Month Name"] = (
+        data["Date"]
+        .dt.strftime("%b")
+    )
+
+    # ---------------------------------------------------------------
+    # Prepare FTE data
+    # ---------------------------------------------------------------
+    fte["Year"] = pd.to_numeric(
+        fte["Year"],
+        errors="coerce",
+    )
+
+    fte["FTE"] = pd.to_numeric(
+        fte["FTE"],
+        errors="coerce",
+    )
+
+    fte = fte.dropna(
+        subset=["Year"]
+    )
+
+    fte["Year"] = (
+        fte["Year"]
+        .astype(int)
+    )
+
     return data, fte
 
 
-for repository_file in [EXCEL_FILE, CUSTOM_FIELDS_FILE, PROJECT_OPTIONS_FILE]:
+# -------------------------------------------------------------------
+# Verify required repository files
+# -------------------------------------------------------------------
+for repository_file in [
+    EXCEL_FILE,
+    CUSTOM_FIELDS_FILE,
+    PROJECT_OPTIONS_FILE,
+    PROJECT_OPTIONS_2026_FILE,
+]:
     if not repository_file.exists():
-        st.error(f"Missing repository file: {repository_file.name}")
+        st.error(
+            "Missing repository file: "
+            f"{repository_file.name}"
+        )
         st.stop()
 
+
+# -------------------------------------------------------------------
+# Load dashboard data
+# -------------------------------------------------------------------
 try:
     flights, fte = load_data(
         EXCEL_FILE.stat().st_mtime,
         CUSTOM_FIELDS_FILE.stat().st_mtime,
         PROJECT_OPTIONS_FILE.stat().st_mtime,
+        PROJECT_OPTIONS_2026_FILE.stat().st_mtime,
     )
 except Exception as exc:
-    st.error("The dashboard could not integrate the repository data files.")
+    st.error(
+        "The dashboard could not integrate "
+        "the repository data files."
+    )
     st.exception(exc)
     st.stop()
 
+
+# -------------------------------------------------------------------
+# Annual data and target pathway
+# -------------------------------------------------------------------
 annual_all = (
-    flights.groupby("Year", as_index=False)
-    .agg(
-        Flights=("Emissions", "size"),
-        Emissions=("Emissions", "sum"),
-        Distance=("Distance", "sum"),
+    flights.groupby(
+        "Year",
+        as_index=False,
     )
-    .merge(fte[["Year", "FTE"]], on="Year", how="left")
+    .agg(
+        Flights=(
+            "Emissions",
+            "size",
+        ),
+        Emissions=(
+            "Emissions",
+            "sum",
+        ),
+        Distance=(
+            "Distance",
+            "sum",
+        ),
+    )
+    .merge(
+        fte[
+            [
+                "Year",
+                "FTE",
+            ]
+        ],
+        on="Year",
+        how="left",
+    )
 )
-annual_all["Emissions per FTE"] = annual_all["Emissions"] / annual_all["FTE"]
+
+annual_all["Emissions per FTE"] = (
+    annual_all["Emissions"]
+    / annual_all["FTE"]
+)
+
 base_rows = annual_all.loc[
-    annual_all["Year"].eq(TARGET_BASE_YEAR), "Emissions per FTE"
+    annual_all["Year"].eq(
+        TARGET_BASE_YEAR
+    ),
+    "Emissions per FTE",
 ]
+
 target_base_value = (
-    float(base_rows.iloc[0])
-    if len(base_rows) and pd.notna(base_rows.iloc[0])
+    float(
+        base_rows.iloc[0]
+    )
+    if (
+        len(base_rows)
+        and pd.notna(
+            base_rows.iloc[0]
+        )
+    )
     else None
 )
+
 target_pathway = {
-    year: target_for_year(year, target_base_value)
-    for year in range(TARGET_BASE_YEAR, TARGET_YEAR + 1)
+    year: target_for_year(
+        year,
+        target_base_value,
+    )
+    for year in range(
+        TARGET_BASE_YEAR,
+        TARGET_YEAR + 1,
+    )
 }
 
-st.title("📊 Wyss Academy Flight Emissions Dashboard")
-years = sorted(flights["Year"].unique())
+
+# -------------------------------------------------------------------
+# Dashboard header and sidebar
+# -------------------------------------------------------------------
+st.title(
+    "📊 Wyss Academy Flight Emissions Dashboard"
+)
+
+years = sorted(
+    flights["Year"].unique()
+)
 
 with st.sidebar:
-    selected_year = st.selectbox("Analysis year", years, index=len(years) - 1)
-    cabins = sorted(flights["Cabin"].unique())
-    selected_cabins = st.multiselect("Cabin class", cabins, default=cabins)
-    teams = sorted(flights["Team"].unique())
-    selected_teams = st.multiselect("Teams", teams, default=teams)
-    if st.button("Clear cache and reload data"):
+    selected_year = st.selectbox(
+        "Analysis year",
+        years,
+        index=len(years) - 1,
+    )
+
+    cabins = sorted(
+        flights["Cabin"].unique()
+    )
+
+    selected_cabins = st.multiselect(
+        "Cabin class",
+        cabins,
+        default=cabins,
+    )
+
+    teams = sorted(
+        flights["Team"].unique()
+    )
+
+    selected_teams = st.multiselect(
+        "Teams",
+        teams,
+        default=teams,
+    )
+
+    if st.button(
+        "Clear cache and reload data"
+    ):
         st.cache_data.clear()
         st.rerun()
 
+
+# -------------------------------------------------------------------
+# Apply dashboard filters
+# -------------------------------------------------------------------
 filtered = flights[
-    flights["Cabin"].isin(selected_cabins) & flights["Team"].isin(selected_teams)
+    flights["Cabin"].isin(
+        selected_cabins
+    )
+    & flights["Team"].isin(
+        selected_teams
+    )
 ]
-selected = filtered[filtered["Year"].eq(selected_year)]
+
+selected = filtered[
+    filtered["Year"].eq(
+        selected_year
+    )
+]
+
 fte_map = (
-    fte.dropna(subset=["FTE"])
-    .drop_duplicates("Year", keep="last")
-    .set_index("Year")["FTE"]
+    fte.dropna(
+        subset=["FTE"]
+    )
+    .drop_duplicates(
+        "Year",
+        keep="last",
+    )
+    .set_index(
+        "Year"
+    )["FTE"]
     .to_dict()
 )
-selected_fte = fte_map.get(selected_year)
-selected_emissions = selected["Emissions"].sum()
 
+selected_fte = fte_map.get(
+    selected_year
+)
+
+selected_emissions = (
+    selected["Emissions"]
+    .sum()
+)
+
+
+# -------------------------------------------------------------------
+# Main dashboard metrics
+# -------------------------------------------------------------------
 metrics = st.columns(4)
-metrics[0].metric("Flights", f"{len(selected):,}")
-metrics[1].metric("Emissions", f"{selected_emissions:.1f} tCO₂e")
-metrics[2].metric("Distance", f"{selected['Distance'].sum():,.0f} km")
+
+metrics[0].metric(
+    "Flights",
+    f"{len(selected):,}",
+)
+
+metrics[1].metric(
+    "Emissions",
+    f"{selected_emissions:.1f} tCO₂e",
+)
+
+metrics[2].metric(
+    "Distance",
+    f"{selected['Distance'].sum():,.0f} km",
+)
+
 metrics[3].metric(
     "Emissions per FTE",
-    "n/a" if not selected_fte else f"{selected_emissions / selected_fte:.2f} tCO₂e/FTE",
+    (
+        "n/a"
+        if not selected_fte
+        else (
+            f"{selected_emissions / selected_fte:.2f} "
+            "tCO₂e/FTE"
+        )
+    ),
 )
 
 # -------------------------------------------------------------------
