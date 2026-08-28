@@ -1,6 +1,6 @@
 from pathlib import Path
 import re
-
+import unicodedata
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -78,6 +78,77 @@ def clean_series(series, blank="Unassigned"):
         result.eq(""),
         blank,
     )
+
+def normalize_match_text(value):
+    """
+    Normalize a name or other text for cross-source matching.
+
+    Accents, capitalization, spaces, punctuation, and hyphens are removed.
+    For example, 'Joërg Leumann' and 'Joerg Leumann' become comparable.
+    """
+    value = clean_key(value)
+
+    if not value:
+        return ""
+
+    value = unicodedata.normalize(
+        "NFKD",
+        value,
+    )
+
+    value = value.encode(
+        "ascii",
+        "ignore",
+    ).decode(
+        "ascii"
+    )
+
+    return re.sub(
+        r"[^a-z0-9]",
+        "",
+        value.lower(),
+    )
+
+
+def normalize_match_date(value):
+    """
+    Convert a date or datetime into a consistent YYYY-MM-DD value.
+    """
+    value = pd.to_datetime(
+        value,
+        errors="coerce",
+    )
+
+    if pd.isna(value):
+        return ""
+
+    return value.strftime(
+        "%Y-%m-%d"
+    )
+
+
+def normalize_match_cabin(value):
+    """
+    Normalize cabin terminology between Traveler Manifest and legacy data.
+    """
+    value = normalize_match_text(
+        value
+    )
+
+    if "business" in value:
+        return "business"
+
+    if "first" in value:
+        return "first"
+
+    if "premium" in value:
+        return "premiumeconomy"
+
+    if "economy" in value:
+        return "economy"
+
+    return value
+
 
 
 def unique_map(frame, key, value):
@@ -402,8 +473,6 @@ def load_data(
         project_rows["Project"] != ""
     ].copy()
 
-    # A broad identifier is used only when all project records for
-    # that identifier agree on one raw project value.
     project_maps = {
         key: unique_map(
             project_rows,
@@ -418,32 +487,196 @@ def load_data(
         ]
     }
 
+
     # ---------------------------------------------------------------
-    # Match Traveler Manifest rows to raw Custom Fields projects
+    # Prepare conservative legacy project fallbacks
+    # ---------------------------------------------------------------
+
+    # Keep the raw legacy project value until the integrated
+    # flight record's year is known.
+    #
+    # The applicable project whitelist is applied later:
+    #   through 2025 -> Custom field options.csv
+    #   from 2026    -> Custom field options_2026.xlsx
+    legacy["Resolved Project"] = (
+        legacy["Projektnummer"]
+        .map(clean_key)
+    )
+
+    legacy_lookup = legacy[
+        legacy["Resolved Project"] != ""
+    ].copy()
+
+    # Normalize the matching fields in the legacy source.
+    legacy_lookup["Match Person"] = (
+        legacy_lookup["Name"]
+        .map(normalize_match_text)
+    )
+
+    legacy_lookup["Match Date"] = (
+        legacy_lookup["Date"]
+        .map(normalize_match_date)
+    )
+
+    legacy_lookup["Match Departure"] = (
+        legacy_lookup["DepartureAirport"]
+        .map(clean_key)
+        .str.upper()
+    )
+
+    legacy_lookup["Match Arrival"] = (
+        legacy_lookup["ArrivalAirport"]
+        .map(clean_key)
+        .str.upper()
+    )
+
+    legacy_lookup["Match Cabin"] = (
+        legacy_lookup["Class"]
+        .map(normalize_match_cabin)
+    )
+
+    # Composite keys are stored as strings because the existing unique_map()
+    # function cleans and compares string keys.
+    legacy_lookup["Exact Match Key"] = (
+        legacy_lookup["Match Person"]
+        + "|"
+        + legacy_lookup["Match Date"]
+        + "|"
+        + legacy_lookup["Match Departure"]
+        + "|"
+        + legacy_lookup["Match Arrival"]
+        + "|"
+        + legacy_lookup["Match Cabin"]
+    )
+
+    legacy_lookup["Person Date Key"] = (
+        legacy_lookup["Match Person"]
+        + "|"
+        + legacy_lookup["Match Date"]
+    )
+
+    # Keep a fallback only when every matching legacy record agrees
+    # on one raw project value.
+    legacy_exact_project_map = unique_map(
+        legacy_lookup,
+        "Exact Match Key",
+        "Resolved Project",
+    )
+
+    legacy_person_date_project_map = unique_map(
+        legacy_lookup,
+        "Person Date Key",
+        "Resolved Project",
+    )
+
+
+    # ---------------------------------------------------------------
+    # Prepare equivalent Traveler Manifest matching keys
+    # ---------------------------------------------------------------
+    traveler["Match Person"] = (
+        traveler["Traveler Name"]
+        .map(normalize_match_text)
+    )
+
+    traveler["Match Date"] = (
+        traveler["Departure Date & Time"]
+        .map(normalize_match_date)
+    )
+
+    traveler["Match Departure"] = (
+        traveler["Departure Airport Code"]
+        .map(clean_key)
+        .str.upper()
+    )
+
+    traveler["Match Arrival"] = (
+        traveler["Arrival Airport Code"]
+        .map(clean_key)
+        .str.upper()
+    )
+
+    traveler["Match Cabin"] = (
+        traveler["Cabin"]
+        .map(normalize_match_cabin)
+    )
+
+    traveler["Exact Match Key"] = (
+        traveler["Match Person"]
+        + "|"
+        + traveler["Match Date"]
+        + "|"
+        + traveler["Match Departure"]
+        + "|"
+        + traveler["Match Arrival"]
+        + "|"
+        + traveler["Match Cabin"]
+    )
+
+    traveler["Person Date Key"] = (
+        traveler["Match Person"]
+        + "|"
+        + traveler["Match Date"]
+    )
+
+
+    # ---------------------------------------------------------------
+    # Match Traveler Manifest rows to a raw project value
     # ---------------------------------------------------------------
     def traveler_project(row):
+        """
+        Resolve a raw project value in descending order of reliability.
+
+        Custom Fields identifiers are preferred. Legacy data is used only
+        when Custom Fields produces no project and the legacy key maps
+        uniquely to one raw project value.
+        """
         candidates = [
+            # 1. Exact Custom Fields transaction key
             project_maps["TX"].get(
                 clean_key(
                     row.get("Transaction Key")
                 ),
                 "",
             ),
+
+            # 2. Unique Custom Fields PNR
             project_maps["PNR"].get(
                 clean_key(
                     row.get("Spotnana PNR ID")
                 ),
                 "",
             ),
+
+            # 3. Unique Custom Fields ticket or confirmation number
             project_maps["TICKET"].get(
                 clean_key(
                     row.get("Ticket Number")
                 ),
                 "",
             ),
+
+            # 4. Unique Custom Fields Trip ID
             project_maps["TRIP"].get(
                 clean_key(
                     row.get("Trip ID")
+                ),
+                "",
+            ),
+
+            # 5. Exact legacy flight:
+            # traveler + date + departure + arrival + cabin
+            legacy_exact_project_map.get(
+                clean_key(
+                    row.get("Exact Match Key")
+                ),
+                "",
+            ),
+
+            # 6. Conservative legacy fallback:
+            # traveler + date, only when all matching records agree
+            legacy_person_date_project_map.get(
+                clean_key(
+                    row.get("Person Date Key")
                 ),
                 "",
             ),
@@ -453,10 +686,11 @@ def load_data(
             (
                 candidate
                 for candidate in candidates
-                if candidate
+                if clean_key(candidate)
             ),
             "",
         )
+
 
     traveler["Resolved Project"] = (
         traveler.apply(
@@ -465,12 +699,6 @@ def load_data(
         )
     )
 
-    # Keep the raw legacy project value until the integrated
-    # flight record's year is known.
-    legacy["Resolved Project"] = (
-        legacy["Projektnummer"]
-        .map(clean_key)
-    )
 
     # ---------------------------------------------------------------
     # Transfer the raw project value to All Integrated Data
