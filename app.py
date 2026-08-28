@@ -8,7 +8,7 @@ import streamlit as st
 
 
 st.set_page_config(
-    page_title="MyClimate Dashboard",
+    page_title="WA Flight Emission Dashboard",
     page_icon="📊",
     layout="wide",
 )
@@ -1024,18 +1024,50 @@ base_rows = annual_all.loc[
     "Emissions per FTE",
 ]
 
-target_base_value = (
-    float(
-        base_rows.iloc[0]
+# -------------------------------------------------------------------
+# Baseline and target pathway
+# -------------------------------------------------------------------
+
+# The baseline is the simple average of the annual emissions-per-FTE
+# results for 2023 and 2024.
+BASELINE_YEARS = [
+    2023,
+    2024,
+]
+
+baseline_rows = annual_all[
+    annual_all["Year"].isin(
+        BASELINE_YEARS
     )
-    if (
-        len(base_rows)
-        and pd.notna(
-            base_rows.iloc[0]
-        )
-    )
-    else None
+].copy()
+
+baseline_rows = baseline_rows.dropna(
+    subset=[
+        "Emissions per FTE",
+    ]
 )
+
+if len(baseline_rows) == len(BASELINE_YEARS):
+    target_base_value = (
+        baseline_rows["Emissions per FTE"]
+        .mean()
+    )
+else:
+    target_base_value = None
+
+
+# The target line starts in 2024 at the 2023–2024 average
+# and reaches half of that baseline in 2030.
+target_pathway = {
+    year: target_for_year(
+        year,
+        target_base_value,
+    )
+    for year in range(
+        TARGET_BASE_YEAR,
+        TARGET_YEAR + 1,
+    )
+}
 
 target_pathway = {
     year: target_for_year(
