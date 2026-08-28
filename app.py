@@ -1892,3 +1892,547 @@ annual_figure.add_scatter(
 )
 annual_figure.update_yaxes(title="tCO₂e/FTE", rangemode="tozero")
 st.plotly_chart(annual_figure, use_container_width=True)
+
+# -------------------------------------------------------------------
+# Detailed summaries
+# -------------------------------------------------------------------
+st.divider()
+st.subheader("Detailed summaries")
+
+
+# -------------------------------------------------------------------
+# Prepare project summary
+# -------------------------------------------------------------------
+project_detail_summary = (
+    selected[
+        selected["Project Number"] != "Unassigned"
+    ]
+    .groupby(
+        [
+            "Project Number",
+            "Project Description",
+        ],
+        as_index=False,
+    )
+    .agg(
+        Flight_records=(
+            "Emissions",
+            "size",
+        ),
+        Emissions_tCO2e=(
+            "Emissions",
+            "sum",
+        ),
+        Distance_km=(
+            "Distance",
+            "sum",
+        ),
+    )
+    .sort_values(
+        "Emissions_tCO2e",
+        ascending=False,
+    )
+)
+
+total_assigned_project_emissions = (
+    project_detail_summary[
+        "Emissions_tCO2e"
+    ].sum()
+)
+
+if total_assigned_project_emissions > 0:
+    project_detail_summary[
+        "Share_of_assigned_emissions"
+    ] = (
+        project_detail_summary[
+            "Emissions_tCO2e"
+        ]
+        / total_assigned_project_emissions
+    )
+else:
+    project_detail_summary[
+        "Share_of_assigned_emissions"
+    ] = 0.0
+
+
+# -------------------------------------------------------------------
+# Prepare team summary
+# -------------------------------------------------------------------
+team_detail_summary = (
+    selected.groupby(
+        "Team",
+        as_index=False,
+    )
+    .agg(
+        Flight_records=(
+            "Emissions",
+            "size",
+        ),
+        Emissions_tCO2e=(
+            "Emissions",
+            "sum",
+        ),
+        Distance_km=(
+            "Distance",
+            "sum",
+        ),
+    )
+    .sort_values(
+        "Emissions_tCO2e",
+        ascending=False,
+    )
+)
+
+total_team_emissions = (
+    team_detail_summary[
+        "Emissions_tCO2e"
+    ].sum()
+)
+
+if total_team_emissions > 0:
+    team_detail_summary[
+        "Share_of_total_emissions"
+    ] = (
+        team_detail_summary[
+            "Emissions_tCO2e"
+        ]
+        / total_team_emissions
+    )
+else:
+    team_detail_summary[
+        "Share_of_total_emissions"
+    ] = 0.0
+
+
+# -------------------------------------------------------------------
+# Prepare cabin-class summary
+# -------------------------------------------------------------------
+cabin_detail_summary = (
+    selected.groupby(
+        "Cabin",
+        as_index=False,
+    )
+    .agg(
+        Flight_records=(
+            "Emissions",
+            "size",
+        ),
+        Emissions_tCO2e=(
+            "Emissions",
+            "sum",
+        ),
+        Distance_km=(
+            "Distance",
+            "sum",
+        ),
+    )
+    .sort_values(
+        "Emissions_tCO2e",
+        ascending=False,
+    )
+)
+
+cabin_detail_summary[
+    "Cabin class"
+] = (
+    cabin_detail_summary["Cabin"]
+    .map(
+        {
+            "economy": "Economy",
+            "premiumeconomy": "Premium economy",
+            "business": "Business",
+            "first": "First",
+            "unknown": "Unknown",
+        }
+    )
+    .fillna(
+        cabin_detail_summary["Cabin"]
+        .astype(str)
+        .str.replace(
+            "_",
+            " ",
+            regex=False,
+        )
+        .str.title()
+    )
+)
+
+total_cabin_emissions = (
+    cabin_detail_summary[
+        "Emissions_tCO2e"
+    ].sum()
+)
+
+if total_cabin_emissions > 0:
+    cabin_detail_summary[
+        "Share_of_total_emissions"
+    ] = (
+        cabin_detail_summary[
+            "Emissions_tCO2e"
+        ]
+        / total_cabin_emissions
+    )
+else:
+    cabin_detail_summary[
+        "Share_of_total_emissions"
+    ] = 0.0
+
+cabin_detail_summary = (
+    cabin_detail_summary[
+        [
+            "Cabin class",
+            "Flight_records",
+            "Emissions_tCO2e",
+            "Distance_km",
+            "Share_of_total_emissions",
+        ]
+    ]
+)
+
+
+# -------------------------------------------------------------------
+# Prepare detailed flight-record table
+# -------------------------------------------------------------------
+flight_detail_columns = [
+    "Date",
+    "Traveler",
+    "DepartureAirport",
+    "ArrivalAirport",
+    "Cabin",
+    "Flight Type",
+    "Team",
+    "Project Number",
+    "Project Description",
+    "Distance",
+    "Emissions",
+]
+
+# Keep only columns that exist in the current integrated dataset.
+available_flight_detail_columns = [
+    column
+    for column in flight_detail_columns
+    if column in selected.columns
+]
+
+flight_detail_table = selected[
+    available_flight_detail_columns
+].copy()
+
+if "Date" in flight_detail_table.columns:
+    flight_detail_table["Date"] = pd.to_datetime(
+        flight_detail_table["Date"],
+        errors="coerce",
+    ).dt.date
+
+if "Cabin" in flight_detail_table.columns:
+    flight_detail_table["Cabin"] = (
+        flight_detail_table["Cabin"]
+        .map(
+            {
+                "economy": "Economy",
+                "premiumeconomy": "Premium economy",
+                "business": "Business",
+                "first": "First",
+                "unknown": "Unknown",
+            }
+        )
+        .fillna(
+            flight_detail_table["Cabin"]
+            .astype(str)
+            .str.replace(
+                "_",
+                " ",
+                regex=False,
+            )
+            .str.title()
+        )
+    )
+
+if "Distance" in flight_detail_table.columns:
+    flight_detail_table["Distance"] = (
+        pd.to_numeric(
+            flight_detail_table["Distance"],
+            errors="coerce",
+        )
+        .round(0)
+    )
+
+if "Emissions" in flight_detail_table.columns:
+    flight_detail_table["Emissions"] = (
+        pd.to_numeric(
+            flight_detail_table["Emissions"],
+            errors="coerce",
+        )
+        .round(3)
+    )
+
+if "Date" in flight_detail_table.columns:
+    flight_detail_table = (
+        flight_detail_table.sort_values(
+            "Date",
+            ascending=False,
+        )
+    )
+
+
+# -------------------------------------------------------------------
+# Display detailed summary tabs
+# -------------------------------------------------------------------
+(
+    project_tab,
+    team_tab,
+    cabin_tab,
+    flight_tab,
+) = st.tabs(
+    [
+        "Projects",
+        "Teams",
+        "Cabin classes",
+        "Flight records",
+    ]
+)
+
+
+# -------------------------------------------------------------------
+# Project summary table
+# -------------------------------------------------------------------
+with project_tab:
+    st.markdown(
+        f"**Validated project assignments for {selected_year}**"
+    )
+
+    if len(project_detail_summary) > 0:
+        st.dataframe(
+            project_detail_summary,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Project Number": st.column_config.TextColumn(
+                    "Project number",
+                    width="small",
+                ),
+                "Project Description": st.column_config.TextColumn(
+                    "Project description",
+                    width="large",
+                ),
+                "Flight_records": st.column_config.NumberColumn(
+                    "Flight records",
+                    format="%d",
+                ),
+                "Emissions_tCO2e": st.column_config.NumberColumn(
+                    "Emissions (tCO₂e)",
+                    format="%.2f",
+                ),
+                "Distance_km": st.column_config.NumberColumn(
+                    "Distance (km)",
+                    format="%.0f",
+                ),
+                "Share_of_assigned_emissions": (
+                    st.column_config.ProgressColumn(
+                        "Share of assigned emissions",
+                        min_value=0.0,
+                        max_value=1.0,
+                        format="%.1%%",
+                    )
+                ),
+            },
+        )
+    else:
+        st.info(
+            "No validated project assignments are available "
+            "for the selected year and filters."
+        )
+
+
+# -------------------------------------------------------------------
+# Team summary table
+# -------------------------------------------------------------------
+with team_tab:
+    st.markdown(
+        f"**Team-level summary for {selected_year}**"
+    )
+
+    st.dataframe(
+        team_detail_summary,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Team": st.column_config.TextColumn(
+                "Team",
+                width="large",
+            ),
+            "Flight_records": st.column_config.NumberColumn(
+                "Flight records",
+                format="%d",
+            ),
+            "Emissions_tCO2e": st.column_config.NumberColumn(
+                "Emissions (tCO₂e)",
+                format="%.2f",
+            ),
+            "Distance_km": st.column_config.NumberColumn(
+                "Distance (km)",
+                format="%.0f",
+            ),
+            "Share_of_total_emissions": (
+                st.column_config.ProgressColumn(
+                    "Share of total emissions",
+                    min_value=0.0,
+                    max_value=1.0,
+                    format="%.1%%",
+                )
+            ),
+        },
+    )
+
+
+# -------------------------------------------------------------------
+# Cabin-class summary table
+# -------------------------------------------------------------------
+with cabin_tab:
+    st.markdown(
+        f"**Cabin-class summary for {selected_year}**"
+    )
+
+    st.dataframe(
+        cabin_detail_summary,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Cabin class": st.column_config.TextColumn(
+                "Cabin class",
+                width="medium",
+            ),
+            "Flight_records": st.column_config.NumberColumn(
+                "Flight records",
+                format="%d",
+            ),
+            "Emissions_tCO2e": st.column_config.NumberColumn(
+                "Emissions (tCO₂e)",
+                format="%.2f",
+            ),
+            "Distance_km": st.column_config.NumberColumn(
+                "Distance (km)",
+                format="%.0f",
+            ),
+            "Share_of_total_emissions": (
+                st.column_config.ProgressColumn(
+                    "Share of total emissions",
+                    min_value=0.0,
+                    max_value=1.0,
+                    format="%.1%%",
+                )
+            ),
+        },
+    )
+
+
+# -------------------------------------------------------------------
+# Individual flight-record table
+# -------------------------------------------------------------------
+with flight_tab:
+    st.markdown(
+        f"**Included flight records for {selected_year}**"
+    )
+
+    st.caption(
+        "This table reflects the selected year, cabin-class filter, "
+        "team filter, duplicate exclusions, and Include_Final selection."
+    )
+
+    flight_column_config = {}
+
+    if "Date" in flight_detail_table.columns:
+        flight_column_config[
+            "Date"
+        ] = st.column_config.DateColumn(
+            "Date",
+            format="YYYY-MM-DD",
+        )
+
+    if "Traveler" in flight_detail_table.columns:
+        flight_column_config[
+            "Traveler"
+        ] = st.column_config.TextColumn(
+            "Traveler",
+            width="medium",
+        )
+
+    if "DepartureAirport" in flight_detail_table.columns:
+        flight_column_config[
+            "DepartureAirport"
+        ] = st.column_config.TextColumn(
+            "Departure",
+            width="small",
+        )
+
+    if "ArrivalAirport" in flight_detail_table.columns:
+        flight_column_config[
+            "ArrivalAirport"
+        ] = st.column_config.TextColumn(
+            "Arrival",
+            width="small",
+        )
+
+    if "Cabin" in flight_detail_table.columns:
+        flight_column_config[
+            "Cabin"
+        ] = st.column_config.TextColumn(
+            "Cabin class",
+            width="medium",
+        )
+
+    if "Flight Type" in flight_detail_table.columns:
+        flight_column_config[
+            "Flight Type"
+        ] = st.column_config.TextColumn(
+            "Flight distance",
+            width="medium",
+        )
+
+    if "Team" in flight_detail_table.columns:
+        flight_column_config[
+            "Team"
+        ] = st.column_config.TextColumn(
+            "Team",
+            width="medium",
+        )
+
+    if "Project Number" in flight_detail_table.columns:
+        flight_column_config[
+            "Project Number"
+        ] = st.column_config.TextColumn(
+            "Project number",
+            width="small",
+        )
+
+    if "Project Description" in flight_detail_table.columns:
+        flight_column_config[
+            "Project Description"
+        ] = st.column_config.TextColumn(
+            "Project description",
+            width="large",
+        )
+
+    if "Distance" in flight_detail_table.columns:
+        flight_column_config[
+            "Distance"
+        ] = st.column_config.NumberColumn(
+            "Distance (km)",
+            format="%.0f",
+        )
+
+    if "Emissions" in flight_detail_table.columns:
+        flight_column_config[
+            "Emissions"
+        ] = st.column_config.NumberColumn(
+            "Emissions (tCO₂e)",
+            format="%.3f",
+        )
+
+    st.dataframe(
+        flight_detail_table,
+        use_container_width=True,
+        hide_index=True,
+        column_config=flight_column_config,
+        height=600,
+    )
