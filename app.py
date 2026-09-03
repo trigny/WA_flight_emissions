@@ -624,79 +624,78 @@ def load_data(
     # ---------------------------------------------------------------
     def traveler_project(row):
         """
-        Resolve a raw project value in descending order of reliability.
+        Resolve a project from Custom Fields only.
 
-        Custom Fields identifiers are preferred. Legacy data is used only
-        when Custom Fields produces no project and the legacy key maps
-        uniquely to one raw project value.
+        Returns:
+            Resolved Project
+            Project Match Method
         """
-        candidates = [
-            # 1. Exact Custom Fields transaction key
-            project_maps["TX"].get(
-                clean_key(
-                    row.get("Transaction Key")
+        lookups = [
+            (
+                "Transaction Key",
+                project_maps["TX"].get(
+                    clean_key(
+                        row.get("Transaction Key")
+                    ),
+                    "",
                 ),
-                "",
             ),
-
-            # 2. Unique Custom Fields PNR
-            project_maps["PNR"].get(
-                clean_key(
-                    row.get("Spotnana PNR ID")
+            (
+                "PNR",
+                project_maps["PNR"].get(
+                    clean_key(
+                        row.get("Spotnana PNR ID")
+                    ),
+                    "",
                 ),
-                "",
             ),
-
-            # 3. Unique Custom Fields ticket or confirmation number
-            project_maps["TICKET"].get(
-                clean_key(
-                    row.get("Ticket Number")
+            (
+                "Ticket Number",
+                project_maps["TICKET"].get(
+                    clean_key(
+                        row.get("Ticket Number")
+                    ),
+                    "",
                 ),
-                "",
             ),
-
-            # 4. Unique Custom Fields Trip ID
-            project_maps["TRIP"].get(
-                clean_key(
-                    row.get("Trip ID")
+            (
+                "Trip ID",
+                project_maps["TRIP"].get(
+                    clean_key(
+                        row.get("Trip ID")
+                    ),
+                    "",
                 ),
-                "",
-            ),
-
-            # 5. Exact legacy flight:
-            # traveler + date + departure + arrival + cabin
-            legacy_exact_project_map.get(
-                clean_key(
-                    row.get("Exact Match Key")
-                ),
-                "",
-            ),
-
-            # 6. Conservative legacy fallback:
-            # traveler + date, only when all matching records agree
-            legacy_person_date_project_map.get(
-                clean_key(
-                    row.get("Person Date Key")
-                ),
-                "",
             ),
         ]
 
-        return next(
-            (
-                candidate
-                for candidate in candidates
-                if clean_key(candidate)
-            ),
-            "",
+        for match_method, candidate in lookups:
+            candidate = clean_key(candidate)
+
+            if candidate:
+                return pd.Series(
+                    {
+                        "Resolved Project": candidate,
+                        "Project Match Method": match_method,
+                    }
+                )
+
+        return pd.Series(
+            {
+                "Resolved Project": "",
+                "Project Match Method": "No Custom Fields match",
+            }
         )
 
 
-    traveler["Resolved Project"] = (
-        traveler.apply(
-            traveler_project,
-            axis=1,
-        )
+    traveler[
+        [
+            "Resolved Project",
+            "Project Match Method",
+        ]
+    ] = traveler.apply(
+        traveler_project,
+        axis=1,
     )
 
 
@@ -797,7 +796,7 @@ def load_data(
     def validate_project_for_year(row):
         """
         Validate the raw project value against the project list applicable
-        to the individual flight year.
+        to the individual flFight year.
 
         From 2026 onward, only projects listed in
         PROJECT_OPTIONS_2026_FILE are retained.
@@ -820,9 +819,22 @@ def load_data(
 
     all_data["Project Number"] = (
         all_data.apply(
-            validate_project_for_year,
+            integrated_project,
             axis=1,
         )
+    )
+
+    # Preserve the project returned by the matching process
+    # before validating it against the year-specific project list.
+    all_data["Raw Project Number"] = (
+        all_data["Project Number"].copy()
+    )
+
+    # The year must be numeric before the applicable project list
+    # can be selected.
+    all_data["Year"] = pd.to_numeric(
+        all_data["Year"],
+        errors="coerce",
     )
 
     def describe_project_for_year(row):
