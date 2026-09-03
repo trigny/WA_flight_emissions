@@ -1453,12 +1453,178 @@ else:
     st.info("No project assignments for the selected filters.")
 
 # -------------------------------------------------------------------
-# Restored flight-distance pie charts
+# Emissions by team
 # -------------------------------------------------------------------
 st.divider()
 
-st.subheader(f"Flights and emissions by flight distance ({selected_year})")
+st.subheader(
+    f"Emissions by team ({selected_year})"
+)
 
+team_summary = (
+    selected
+    .groupby(
+        "Team",
+        as_index=False,
+    )
+    .agg(
+        Flights=(
+            "Emissions",
+            "size",
+        ),
+        Emissions=(
+            "Emissions",
+            "sum",
+        ),
+        Distance=(
+            "Distance",
+            "sum",
+        ),
+    )
+    .sort_values(
+        "Emissions",
+        ascending=False,
+    )
+)
+
+if len(team_summary):
+    team_metrics = st.columns(3)
+
+    team_metrics[0].metric(
+        "Teams represented",
+        f"{team_summary['Team'].nunique():,}",
+    )
+
+    team_metrics[1].metric(
+        "Flight records",
+        f"{team_summary['Flights'].sum():,.0f}",
+    )
+
+    team_metrics[2].metric(
+        "Total emissions",
+        f"{team_summary['Emissions'].sum():.2f} tCO₂e",
+    )
+
+    # Sort ascending so the highest-emitting team appears at the top
+    # of the horizontal chart.
+    team_chart = (
+        team_summary
+        .sort_values(
+            "Emissions",
+            ascending=True,
+        )
+        .copy()
+    )
+
+    team_figure = px.bar(
+        team_chart,
+        x="Emissions",
+        y="Team",
+        orientation="h",
+        text="Emissions",
+        custom_data=[
+            "Flights",
+            "Distance",
+        ],
+        title=(
+            f"Emissions by team in "
+            f"{selected_year}"
+        ),
+        labels={
+            "Team": "Team",
+            "Emissions": "Emissions (tCO₂e)",
+        },
+    )
+
+    team_figure.update_traces(
+        marker_color="#2F73D2",
+        texttemplate="%{text:.2f}",
+        textposition="outside",
+        cliponaxis=False,
+        hovertemplate=(
+            "<b>%{y}</b><br>"
+            "Emissions: %{x:.2f} tCO₂e<br>"
+            "Flights: %{customdata,.0f}<br>"
+            "Distance: %{customdata,.0f} km"
+            "<extra></extra>"
+        ),
+    )
+
+    team_figure.update_xaxes(
+        title="Emissions (tCO₂e)",
+        rangemode="tozero",
+    )
+
+    team_figure.update_yaxes(
+        title="Team",
+    )
+
+    team_figure.update_layout(
+        height=max(
+            420,
+            35 * len(team_chart),
+        ),
+        margin=dict(
+            l=20,
+            r=70,
+            t=60,
+            b=40,
+        ),
+        showlegend=False,
+    )
+
+    st.plotly_chart(
+        team_figure,
+        use_container_width=True,
+    )
+
+    team_table = (
+        team_summary
+        .copy()
+    )
+
+    team_table["Share of emissions"] = (
+        team_table["Emissions"]
+        / team_table["Emissions"].sum()
+    )
+
+    st.dataframe(
+        team_table,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Team": st.column_config.TextColumn(
+                "Team",
+            ),
+            "Flights": st.column_config.NumberColumn(
+                "Flights",
+                format="%d",
+            ),
+            "Emissions": st.column_config.NumberColumn(
+                "Emissions",
+                format="%.2f tCO₂e",
+            ),
+            "Distance": st.column_config.NumberColumn(
+                "Distance",
+                format="%.0f km",
+            ),
+            "Share of emissions": (
+                st.column_config.ProgressColumn(
+                    "Share of emissions",
+                    min_value=0,
+                    max_value=1,
+                    format="%.1%%",
+                )
+            ),
+        },
+    )
+
+else:
+    st.info(
+        "No team data for the selected filters."
+    )
+    
+    
 # -------------------------------------------------------------------
 # Dashboard chart analysis
 # -------------------------------------------------------------------
@@ -2471,3 +2637,4 @@ with flight_tab:
         column_config=flight_column_config,
         height=600,
     )
+    
