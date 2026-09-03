@@ -721,6 +721,11 @@ def load_data(
             row.get("Record_Source")
         )
 
+        year = pd.to_numeric(
+            row.get("Year"),
+            errors="coerce",
+        )
+
         if (
             source == "Traveler Manifest"
             and 0 <= source_index < len(traveler)
@@ -735,6 +740,14 @@ def load_data(
             source == "Legacy MyClimate Import"
             and 0 <= source_index < len(legacy)
         ):
+            # Legacy project values are allowed only through 2025.
+            # From 2026 onward, they must remain unassigned.
+            if (
+                pd.notna(year)
+                and int(year) >= 2026
+            ):
+                return ""
+
             return clean_key(
                 legacy.iloc[source_index][
                     "Resolved Project"
@@ -743,12 +756,14 @@ def load_data(
 
         return ""
 
+
     all_data["Project Number"] = (
         all_data.apply(
             integrated_project,
             axis=1,
         )
     )
+
 
     # The year must be numeric before the applicable project list
     # can be selected.
