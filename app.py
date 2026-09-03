@@ -313,7 +313,7 @@ def load_data(
     options_2026_mtime,
 ):
     """
-    Load the source files and assign a validated project number
+    Load the source files and assign a project number
     according to the year of each individual flight record.
 
     The timestamp parameters are used by Streamlit to invalidate
@@ -1396,7 +1396,7 @@ if len(project_summary):
         orientation="h",
         text="Emissions",
         custom_data=["Project Description", "Flights", "Distance"],
-        title=f"Highest-emitting validated projects in {selected_year}",
+        title=f"Highest emitting projects in {selected_year}",
     )
     project_figure.update_traces(
         texttemplate="%{text:.2f}",
@@ -1415,7 +1415,7 @@ if len(project_summary):
         hide_index=True,
     )
 else:
-    st.info("No validated project assignments for the selected filters.")
+    st.info("No project assignments for the selected filters.")
 
 # -------------------------------------------------------------------
 # Restored flight-distance pie charts
