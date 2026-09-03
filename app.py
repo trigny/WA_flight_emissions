@@ -796,18 +796,26 @@ def load_data(
 
     def validate_project_for_year(row):
         """
-        Validate the matched raw project value against the
-        project list applicable to the flight year.
+        Validate the raw project value against the project list applicable
+        to the individual flight year.
+
+        From 2026 onward, only projects listed in
+        PROJECT_OPTIONS_2026_FILE are retained.
         """
-        year_codes, _ = (
-            project_resources_for_year(
-                row["Year"]
+        year = row["Year"]
+
+        if (
+            pd.notna(year)
+            and int(year) >= 2026
+        ):
+            return canonical_project(
+                row["Project Number"],
+                valid_codes_2026,
             )
-        )
 
         return canonical_project(
             row["Project Number"],
-            year_codes,
+            valid_codes,
         )
 
     all_data["Project Number"] = (
