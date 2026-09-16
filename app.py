@@ -15,19 +15,10 @@ st.set_page_config(
 
 
 # -------------------------------------------------------------------
-# Repository files
+# Repository file
 # -------------------------------------------------------------------
 BASE = Path(__file__).resolve().parent
-
-EXCEL_FILE = BASE / "Flight Emissions Dashboard.xlsx"
-CUSTOM_FIELDS_FILE = BASE / "Custom_Fields_2026-06.xlsx"
-
-# Project numbers valid through 2025.
-PROJECT_OPTIONS_FILE = BASE / "Custom field options.csv"
-
-# Project numbers valid from 2026 onward.
-PROJECT_OPTIONS_2026_FILE = BASE / "Custom field options_2026.xlsx"
-
+EXCEL_FILE = BASE / "Flight Emissions Dashboard v2.xlsx"
 
 # -------------------------------------------------------------------
 # Target pathway
@@ -151,68 +142,6 @@ def normalize_match_cabin(value):
 
 
 
-def unique_map(frame, key, value):
-    """
-    Create a mapping only when one identifier corresponds to exactly
-    one distinct project value.
-    """
-    data = frame[
-        [
-            key,
-            value,
-        ]
-    ].copy()
-
-    data[key] = data[key].map(clean_key)
-    data[value] = data[value].map(clean_key)
-
-    data = data[
-        (data[key] != "")
-        & (data[value] != "")
-    ]
-
-    grouped = (
-        data.groupby(key)[value]
-        .agg(
-            lambda values: sorted(
-                set(values)
-            )
-        )
-    )
-
-    return {
-        key_value: values[0]
-        for key_value, values in grouped.items()
-        if len(values) == 1
-    }
-
-
-def canonical_project(value, valid_codes):
-    """
-    Validate a project number against the applicable project list.
-
-    If a value contains an SP suffix, such as 2.1.4-SP1, the parent
-    project number is accepted only when the parent exists in the
-    applicable project list.
-    """
-    code = clean_key(value)
-
-    if code in valid_codes:
-        return code
-
-    parent = re.sub(
-        r"-SP\d+$",
-        "",
-        code,
-        flags=re.IGNORECASE,
-    )
-
-    if parent in valid_codes:
-        return parent
-
-    return ""
-
-
 def target_for_year(year, base_value):
     """
     Calculate the annual emissions-per-FTE target.
@@ -244,804 +173,144 @@ def target_for_year(year, base_value):
     ) * fraction
 
 
-def prepare_project_options(
-    option_data,
-    option_file,
-):
-    """
-    Validate and standardize one project-options dataset.
-    """
-    option_data = option_data.copy()
-
-    option_data.columns = (
-        option_data.columns
-        .astype(str)
-        .str.strip()
-    )
-
-    required_columns = {
-        "Name",
-        "Description",
-    }
-
-    missing_columns = required_columns.difference(
-        option_data.columns
-    )
-
-    if missing_columns:
-        raise ValueError(
-            f"{option_file.name} is missing required columns: "
-            f"{sorted(missing_columns)}"
-        )
-
-    option_data["Name"] = (
-        option_data["Name"]
-        .map(clean_key)
-    )
-
-    option_data["Description"] = (
-        option_data["Description"]
-        .fillna("")
-        .astype(str)
-        .str.strip()
-    )
-
-    option_data = (
-        option_data[
-            option_data["Name"] != ""
-        ]
-        .drop_duplicates(
-            subset="Name",
-            keep="first",
-        )
-        .copy()
-    )
-
-    return option_data
-
-
 # -------------------------------------------------------------------
-# Load and integrate the repository data
+# Load the simplified Excel dashboard
 # -------------------------------------------------------------------
-@st.cache_data(
-    show_spinner="Reading repository files..."
-)
-def load_data(
-    workbook_mtime,
-    custom_mtime,
-    options_mtime,
-    options_2026_mtime,
-):
-    """
-    Load the source files and assign a project number
-    according to the year of each individual flight record.
+@st.cache_data(show_spinner="Reading flight emissions workbook...")
+def load_data(workbook_mtime):
+    """Load dashboard-ready flight and FTE data from the main workbook.
 
-    The timestamp parameters are used by Streamlit to invalidate
-    the cache when any source file changes.
+    All Integrated Data is the single source for flight records. It already
+    contains the fixed history through 2025, calculated newer records, project
+    codes, duplicate decisions, distances and Final_RFI3_tCO2e values.
     """
-
-    # ---------------------------------------------------------------
-    # Load the source tables
-    # ---------------------------------------------------------------
     all_data = pd.read_excel(
         EXCEL_FILE,
         sheet_name="All Integrated Data",
         engine="openpyxl",
     )
-
-    traveler = pd.read_excel(
-        EXCEL_FILE,
-        sheet_name="Traveler Manifest",
-        header=8,
-        engine="openpyxl",
-    )
-
-    legacy = pd.read_excel(
-        EXCEL_FILE,
-        sheet_name="Legacy MyClimate Import",
-        engine="openpyxl",
-    )
-
     fte = pd.read_excel(
         EXCEL_FILE,
         sheet_name="FTE Data",
         engine="openpyxl",
     )
 
-    custom = pd.read_excel(
-        CUSTOM_FIELDS_FILE,
-        header=6,
-        engine="openpyxl",
-    )
-
-    # ---------------------------------------------------------------
-    # Load both project-option lists
-    # ---------------------------------------------------------------
-    options = pd.read_csv(
-        PROJECT_OPTIONS_FILE,
-        dtype=str,
-    )
-
-    options_2026 = pd.read_excel(
-        PROJECT_OPTIONS_2026_FILE,
-        dtype=str,
-        engine="openpyxl",
-    )
-
-    options = prepare_project_options(
-        options,
-        PROJECT_OPTIONS_FILE,
-    )
-
-    options_2026 = prepare_project_options(
-        options_2026,
-        PROJECT_OPTIONS_2026_FILE,
-    )
-
-    # Project codes and descriptions valid through 2025.
-    valid_codes = set(
-        options["Name"]
-    )
-
-    descriptions = (
-        options
-        .set_index("Name")["Description"]
-        .to_dict()
-    )
-
-    # Project codes and descriptions valid from 2026 onward.
-    valid_codes_2026 = set(
-        options_2026["Name"]
-    )
-
-    descriptions_2026 = (
-        options_2026
-        .set_index("Name")["Description"]
-        .to_dict()
-    )
-
-    # ---------------------------------------------------------------
-    # Validate the Custom Fields structure
-    # ---------------------------------------------------------------
-    required_custom = {
-        "Custom Question",
-        "Travel Data Answer",
-        "Travel Data Transaction Key",
-        "Trip ID",
-        "Spotnana PNR ID",
-        "Confirmation Number",
+    required = {
+        "Traveler",
+        "Date",
+        "Year",
+        "DepartureAirport",
+        "ArrivalAirport",
+        "Class",
+        "Project_ID_Code",
+        "Flight_Type",
+        "Team",
+        "Distance_km",
+        "Final_RFI3_tCO2e",
+        "Include_Final",
     }
-
-    missing_custom = required_custom.difference(
-        custom.columns
-    )
-
-    if missing_custom:
+    missing = required.difference(all_data.columns)
+    if missing:
         raise ValueError(
-            "Missing Custom Fields columns: "
-            f"{sorted(missing_custom)}"
+            "All Integrated Data is missing required columns: "
+            f"{sorted(missing)}"
         )
 
-    # ---------------------------------------------------------------
-    # Extract raw project answers from Custom Fields
-    # ---------------------------------------------------------------
-    project_rows = custom[
-        custom["Custom Question"]
+    # Use the duplicate decision already calculated in the Excel workflow.
+    data = all_data[
+        all_data["Include_Final"]
         .fillna("")
         .astype(str)
         .str.strip()
-        .eq("(UD15) Project Codes")
-    ].copy()
-
-    # Important:
-    # Keep the raw project value here. Do not validate it against
-    # either project list until the year of the integrated flight
-    # record is known.
-    project_rows["Project"] = (
-        project_rows["Travel Data Answer"]
-        .map(clean_key)
-    )
-
-    project_rows["TX"] = (
-        project_rows[
-            "Travel Data Transaction Key"
-        ]
-        .map(clean_key)
-        .str.replace(
-            r"-Q\d+$",
-            "",
-            regex=True,
-        )
-    )
-
-    project_rows["TRIP"] = (
-        project_rows["Trip ID"]
-        .map(clean_key)
-    )
-
-    project_rows["PNR"] = (
-        project_rows["Spotnana PNR ID"]
-        .map(clean_key)
-    )
-
-    project_rows["TICKET"] = (
-        project_rows["Confirmation Number"]
-        .map(clean_key)
-    )
-
-    project_rows = project_rows[
-        project_rows["Project"] != ""
-    ].copy()
-
-    project_maps = {
-        key: unique_map(
-            project_rows,
-            key,
-            "Project",
-        )
-        for key in [
-            "TX",
-            "TRIP",
-            "PNR",
-            "TICKET",
-        ]
-    }
-
-
-    # ---------------------------------------------------------------
-    # Prepare conservative legacy project fallbacks
-    # ---------------------------------------------------------------
-
-    # Keep the raw legacy project value until the integrated
-    # flight record's year is known.
-    #
-    # The applicable project whitelist is applied later:
-    #   through 2025 -> Custom field options.csv
-    #   from 2026    -> Custom field options_2026.xlsx
-    legacy["Resolved Project"] = (
-        legacy["Projektnummer"]
-        .map(clean_key)
-    )
-
-    legacy_lookup = legacy[
-        legacy["Resolved Project"] != ""
-    ].copy()
-
-    # Normalize the matching fields in the legacy source.
-    legacy_lookup["Match Person"] = (
-        legacy_lookup["Name"]
-        .map(normalize_match_text)
-    )
-
-    legacy_lookup["Match Date"] = (
-        legacy_lookup["Date"]
-        .map(normalize_match_date)
-    )
-
-    legacy_lookup["Match Departure"] = (
-        legacy_lookup["DepartureAirport"]
-        .map(clean_key)
-        .str.upper()
-    )
-
-    legacy_lookup["Match Arrival"] = (
-        legacy_lookup["ArrivalAirport"]
-        .map(clean_key)
-        .str.upper()
-    )
-
-    legacy_lookup["Match Cabin"] = (
-        legacy_lookup["Class"]
-        .map(normalize_match_cabin)
-    )
-
-    # Composite keys are stored as strings because the existing unique_map()
-    # function cleans and compares string keys.
-    legacy_lookup["Exact Match Key"] = (
-        legacy_lookup["Match Person"]
-        + "|"
-        + legacy_lookup["Match Date"]
-        + "|"
-        + legacy_lookup["Match Departure"]
-        + "|"
-        + legacy_lookup["Match Arrival"]
-        + "|"
-        + legacy_lookup["Match Cabin"]
-    )
-
-    legacy_lookup["Person Date Key"] = (
-        legacy_lookup["Match Person"]
-        + "|"
-        + legacy_lookup["Match Date"]
-    )
-
-    # Keep a fallback only when every matching legacy record agrees
-    # on one raw project value.
-    legacy_exact_project_map = unique_map(
-        legacy_lookup,
-        "Exact Match Key",
-        "Resolved Project",
-    )
-
-    legacy_person_date_project_map = unique_map(
-        legacy_lookup,
-        "Person Date Key",
-        "Resolved Project",
-    )
-
-
-    # ---------------------------------------------------------------
-    # Prepare equivalent Traveler Manifest matching keys
-    # ---------------------------------------------------------------
-    traveler["Match Person"] = (
-        traveler["Traveler Name"]
-        .map(normalize_match_text)
-    )
-
-    traveler["Match Date"] = (
-        traveler["Departure Date & Time"]
-        .map(normalize_match_date)
-    )
-
-    traveler["Match Departure"] = (
-        traveler["Departure Airport Code"]
-        .map(clean_key)
-        .str.upper()
-    )
-
-    traveler["Match Arrival"] = (
-        traveler["Arrival Airport Code"]
-        .map(clean_key)
-        .str.upper()
-    )
-
-    traveler["Match Cabin"] = (
-        traveler["Cabin"]
-        .map(normalize_match_cabin)
-    )
-
-    traveler["Exact Match Key"] = (
-        traveler["Match Person"]
-        + "|"
-        + traveler["Match Date"]
-        + "|"
-        + traveler["Match Departure"]
-        + "|"
-        + traveler["Match Arrival"]
-        + "|"
-        + traveler["Match Cabin"]
-    )
-
-    traveler["Person Date Key"] = (
-        traveler["Match Person"]
-        + "|"
-        + traveler["Match Date"]
-    )
-
-
-    # ---------------------------------------------------------------
-    # Match Traveler Manifest rows to a raw project value
-    # ---------------------------------------------------------------
-    def traveler_project(row):
-        """
-        Resolve a project from Custom Fields only.
-
-        Returns:
-            Resolved Project
-            Project Match Method
-        """
-        lookups = [
-            (
-                "Transaction Key",
-                project_maps["TX"].get(
-                    clean_key(
-                        row.get("Transaction Key")
-                    ),
-                    "",
-                ),
-            ),
-            (
-                "PNR",
-                project_maps["PNR"].get(
-                    clean_key(
-                        row.get("Spotnana PNR ID")
-                    ),
-                    "",
-                ),
-            ),
-            (
-                "Ticket Number",
-                project_maps["TICKET"].get(
-                    clean_key(
-                        row.get("Ticket Number")
-                    ),
-                    "",
-                ),
-            ),
-            (
-                "Trip ID",
-                project_maps["TRIP"].get(
-                    clean_key(
-                        row.get("Trip ID")
-                    ),
-                    "",
-                ),
-            ),
-        ]
-
-        for match_method, candidate in lookups:
-            candidate = clean_key(candidate)
-
-            if candidate:
-                return pd.Series(
-                    {
-                        "Resolved Project": candidate,
-                        "Project Match Method": match_method,
-                    }
-                )
-
-        return pd.Series(
-            {
-                "Resolved Project": "",
-                "Project Match Method": "No Custom Fields match",
-            }
-        )
-
-
-    traveler[
-        [
-            "Resolved Project",
-            "Project Match Method",
-        ]
-    ] = traveler.apply(
-        traveler_project,
-        axis=1,
-    )
-
-
-    # ---------------------------------------------------------------
-    # Transfer the raw project value to All Integrated Data
-    # ---------------------------------------------------------------
-    def integrated_project(row):
-        try:
-            source_index = int(
-                float(
-                    row["Calc_or_Source_Row"]
-                )
-            ) - 2
-        except (
-            ValueError,
-            TypeError,
-            KeyError,
-        ):
-            return ""
-
-        source = clean_key(
-            row.get("Record_Source")
-        )
-
-        year = pd.to_numeric(
-            row.get("Year"),
-            errors="coerce",
-        )
-
-        if (
-            source == "Traveler Manifest"
-            and 0 <= source_index < len(traveler)
-        ):
-            return clean_key(
-                traveler.iloc[source_index][
-                    "Resolved Project"
-                ]
-            )
-
-        if (
-            source == "Legacy MyClimate Import"
-            and 0 <= source_index < len(legacy)
-        ):
-            # Legacy project values are allowed only through 2025.
-            # From 2026 onward, they must remain unassigned.
-            if (
-                pd.notna(year)
-                and int(year) >= 2026
-            ):
-                return ""
-
-            return clean_key(
-                legacy.iloc[source_index][
-                    "Resolved Project"
-                ]
-            )
-
-        return ""
-
-
-    all_data["Project Number"] = (
-        all_data.apply(
-            integrated_project,
-            axis=1,
-        )
-    )
-
-
-    # The year must be numeric before the applicable project list
-    # can be selected.
-    all_data["Year"] = pd.to_numeric(
-        all_data["Year"],
-        errors="coerce",
-    )
-
-    # ---------------------------------------------------------------
-    # Select project resources according to each flight's year
-    # ---------------------------------------------------------------
-    def project_resources_for_year(year):
-        """
-        Return project codes and descriptions applicable to
-        one individual flight year.
-        """
-        if (
-            pd.notna(year)
-            and int(year) >= 2026
-        ):
-            return (
-                valid_codes_2026,
-                descriptions_2026,
-            )
-
-        return (
-            valid_codes,
-            descriptions,
-        )
-
-    def validate_project_for_year(row):
-        """
-        Validate the raw project value against the project list applicable
-        to the individual flFight year.
-
-        From 2026 onward, only projects listed in
-        PROJECT_OPTIONS_2026_FILE are retained.
-        """
-        year = row["Year"]
-
-        if (
-            pd.notna(year)
-            and int(year) >= 2026
-        ):
-            return canonical_project(
-                row["Project Number"],
-                valid_codes_2026,
-            )
-
-        return canonical_project(
-            row["Project Number"],
-            valid_codes,
-        )
-
-    all_data["Project Number"] = (
-        all_data.apply(
-            integrated_project,
-            axis=1,
-        )
-    )
-
-    # Preserve the project returned by the matching process
-    # before validating it against the year-specific project list.
-    all_data["Raw Project Number"] = (
-        all_data["Project Number"].copy()
-    )
-
-    # The year must be numeric before the applicable project list
-    # can be selected.
-    all_data["Year"] = pd.to_numeric(
-        all_data["Year"],
-        errors="coerce",
-    )
-
-    def describe_project_for_year(row):
-        """
-        Retrieve the project description from the same list
-        used to validate the project number.
-        """
-        _, year_descriptions = (
-            project_resources_for_year(
-                row["Year"]
-            )
-        )
-
-        return year_descriptions.get(
-            row["Project Number"],
-            "",
-        )
-
-    all_data["Project Description"] = (
-        all_data.apply(
-            describe_project_for_year,
-            axis=1,
-        )
-    )
-
-    # ---------------------------------------------------------------
-    # Prepare the final flight dataset
-    # ---------------------------------------------------------------
-    data = all_data[
-        all_data["Include_Final"]
-        .astype(str)
-        .str.strip()
-        .str.lower()
+        .str.casefold()
         .eq("yes")
     ].copy()
 
-    data["Date"] = pd.to_datetime(
-        data["Date"],
-        errors="coerce",
-    )
-
-    data["Year"] = pd.to_numeric(
-        data["Year"],
-        errors="coerce",
-    )
-
-    data = data.dropna(
-        subset=["Year"]
-    )
-
-    data["Year"] = (
-        data["Year"]
-        .astype(int)
-    )
+    data["Date"] = pd.to_datetime(data["Date"], errors="coerce")
+    data["Year"] = pd.to_numeric(data["Year"], errors="coerce")
+    data = data.dropna(subset=["Year"])
+    data["Year"] = data["Year"].astype(int)
 
     data["Emissions"] = pd.to_numeric(
         data["Final_RFI3_tCO2e"],
         errors="coerce",
-    ).fillna(0)
-
+    ).fillna(0.0)
     data["Distance"] = pd.to_numeric(
         data["Distance_km"],
         errors="coerce",
-    ).fillna(0)
-
-    data["Cabin"] = (
-        clean_series(
-            data["Class"],
-            "Unknown",
-        )
-        .str.lower()
-    )
-
-    # Clean the team/category field.
+    ).fillna(0.0)
+    data["Cabin"] = clean_series(
+        data["Class"],
+        "Unknown",
+    ).str.casefold()
     data["Team"] = clean_series(
         data["Team"],
         "External",
     )
 
-    # Group Guest categories and WA Associate under External.
-    #
-    # startswith("guest") captures:
-    # - Guest
-    # - Guest - Profile
-    # - Guest - No Profile
-    #
-    # casefold() makes the comparison case-insensitive.
-    team_normalized = (
-        data["Team"]
-        .astype(str)
-        .str.strip()
-        .str.casefold()
+    # Keep the original dashboard grouping convention.
+    team_normalized = data["Team"].astype(str).str.strip().str.casefold()
+    external_mask = (
+        team_normalized.str.startswith("guest")
+        | team_normalized.eq("wa associate")
     )
-
-    external_team_mask = (
-        team_normalized.str.startswith(
-            "guest"
-        )
-        | team_normalized.eq(
-            "wa associate"
-        )
-    )
-
-    data.loc[
-        external_team_mask,
-        "Team",
-    ] = "External"
+    data.loc[external_mask, "Team"] = "External"
 
     data["Flight Type"] = (
         data["Flight_Type"]
         .fillna("")
         .astype(str)
         .str.strip()
-        .str.lower()
+        .str.casefold()
         .replace(
             {
-                "very_short_haul": (
-                    "Very short haul"
-                ),
-                "short_haul": (
-                    "Short haul"
-                ),
-                "medium_haul": (
-                    "Medium haul"
-                ),
-                "long_haul": (
-                    "Long haul"
-                ),
+                "very_short_haul": "Very short haul",
+                "short_haul": "Short haul",
+                "medium_haul": "Medium haul",
+                "long_haul": "Long haul",
             }
         )
     )
 
+    # Project codes are now native fields in the Excel integrated dataset.
     data["Project Number"] = clean_series(
-        data["Project Number"],
+        data["Project_ID_Code"],
         "Unassigned",
     )
+    # No external project-options lookup is used. Keep this column so every
+    # existing project chart, tooltip, table and export retains its structure.
+    data["Project Description"] = ""
 
-    data["Month"] = (
-        data["Date"]
-        .dt.month
-    )
+    data["Month"] = data["Date"].dt.month
+    data["Month Name"] = data["Date"].dt.strftime("%b")
 
-    data["Month Name"] = (
-        data["Date"]
-        .dt.strftime("%b")
-    )
-
-    # ---------------------------------------------------------------
-    # Prepare FTE data
-    # ---------------------------------------------------------------
-    fte["Year"] = pd.to_numeric(
-        fte["Year"],
-        errors="coerce",
-    )
-
-    fte["FTE"] = pd.to_numeric(
-        fte["FTE"],
-        errors="coerce",
-    )
-
-    fte = fte.dropna(
-        subset=["Year"]
-    )
-
-    fte["Year"] = (
-        fte["Year"]
-        .astype(int)
-    )
+    required_fte = {"Year", "FTE"}
+    missing_fte = required_fte.difference(fte.columns)
+    if missing_fte:
+        raise ValueError(
+            "FTE Data is missing required columns: "
+            f"{sorted(missing_fte)}"
+        )
+    fte["Year"] = pd.to_numeric(fte["Year"], errors="coerce")
+    fte["FTE"] = pd.to_numeric(fte["FTE"], errors="coerce")
+    fte = fte.dropna(subset=["Year"])
+    fte["Year"] = fte["Year"].astype(int)
 
     return data, fte
 
-
 # -------------------------------------------------------------------
-# Verify required repository files
+# Verify and load the workbook
 # -------------------------------------------------------------------
-for repository_file in [
-    EXCEL_FILE,
-    CUSTOM_FIELDS_FILE,
-    PROJECT_OPTIONS_FILE,
-    PROJECT_OPTIONS_2026_FILE,
-]:
-    if not repository_file.exists():
-        st.error(
-            "Missing repository file: "
-            f"{repository_file.name}"
-        )
-        st.stop()
-
-
-# -------------------------------------------------------------------
-# Load dashboard data
-# -------------------------------------------------------------------
-try:
-    flights, fte = load_data(
-        EXCEL_FILE.stat().st_mtime,
-        CUSTOM_FIELDS_FILE.stat().st_mtime,
-        PROJECT_OPTIONS_FILE.stat().st_mtime,
-        PROJECT_OPTIONS_2026_FILE.stat().st_mtime,
-    )
-except Exception as exc:
-    st.error(
-        "The dashboard could not integrate "
-        "the repository data files."
-    )
-    st.exception(exc)
+if not EXCEL_FILE.exists():
+    st.error(f"Missing repository file: {EXCEL_FILE.name}")
     st.stop()
 
+try:
+    flights, fte = load_data(EXCEL_FILE.stat().st_mtime)
+except Exception as exc:
+    st.error("The dashboard could not read the flight emissions workbook.")
+    st.exception(exc)
+    st.stop()
 
 # -------------------------------------------------------------------
 # Annual data and target pathway
