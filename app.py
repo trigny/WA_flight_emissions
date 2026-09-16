@@ -18,7 +18,7 @@ st.set_page_config(
 # Repository file
 # -------------------------------------------------------------------
 BASE = Path(__file__).resolve().parent
-EXCEL_FILE = BASE / "Flight Emissions Dashboard v3.xlsx"
+EXCEL_FILE = BASE / "Flight Emissions Dashboard v2.xlsx"
 
 # -------------------------------------------------------------------
 # Target pathway
@@ -240,10 +240,21 @@ def load_data(workbook_mtime):
         data["Distance_km"],
         errors="coerce",
     ).fillna(0.0)
-    data["Cabin"] = clean_series(
-        data["Class"],
-        "Unknown",
-    ).str.casefold()
+    cabin_key = (
+        data["Class"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.casefold()
+        .str.replace(r"[\s_-]+", "", regex=True)
+    )
+    data["Cabin"] = cabin_key.replace(
+        {
+            "premiumeconomy": "premiumeconomy",
+            "unknown": "",
+            "unknowncabin": "",
+        }
+    )
     data["Team"] = clean_series(
         data["Team"],
         "External",
@@ -278,8 +289,8 @@ def load_data(workbook_mtime):
         data["Project_ID_Code"],
         "Unassigned",
     )
-    # Travel reason from Traveler Manifest column C is carried into
-    # All Integrated Data as Project_Description.
+    # Project description is the travel reason carried from Traveler Manifest
+    # column C into All Integrated Data.Project_Description.
     data["Project Description"] = clean_series(
         data["Project_Description"],
         "Unassigned",
@@ -864,7 +875,6 @@ with chart_middle:
         "premiumeconomy",
         "business",
         "first",
-        "unknown",
     ]
 
     cabin_emissions = (
@@ -1003,7 +1013,6 @@ cabin_colors = {
     "premiumeconomy": "#F2B84B",
     "business": "#E83B3B",
     "first": "#8259C8",
-    "unknown": "#A6A6A6",
 }
 
 team_cabin_figure = px.bar(
@@ -1345,7 +1354,6 @@ cabin_detail_summary[
             "premiumeconomy": "Premium economy",
             "business": "Business",
             "first": "First",
-            "unknown": "Unknown",
         }
     )
     .fillna(
@@ -1436,8 +1444,7 @@ if "Cabin" in flight_detail_table.columns:
                 "premiumeconomy": "Premium economy",
                 "business": "Business",
                 "first": "First",
-                "unknown": "Unknown",
-            }
+                }
         )
         .fillna(
             flight_detail_table["Cabin"]
