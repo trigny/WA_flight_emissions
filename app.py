@@ -18,7 +18,7 @@ st.set_page_config(
 # Repository file
 # -------------------------------------------------------------------
 BASE = Path(__file__).resolve().parent
-EXCEL_FILE = BASE / "Flight Emissions Dashboard v2.xlsx"
+EXCEL_FILE = BASE / "Flight Emissions Dashboard v3.xlsx"
 
 # -------------------------------------------------------------------
 # Target pathway
@@ -203,6 +203,7 @@ def load_data(workbook_mtime):
         "ArrivalAirport",
         "Class",
         "Project_ID_Code",
+        "Project_Description",
         "Flight_Type",
         "Team",
         "Distance_km",
@@ -277,9 +278,12 @@ def load_data(workbook_mtime):
         data["Project_ID_Code"],
         "Unassigned",
     )
-    # No external project-options lookup is used. Keep this column so every
-    # existing project chart, tooltip, table and export retains its structure.
-    data["Project Description"] = ""
+    # Travel reason from Traveler Manifest column C is carried into
+    # All Integrated Data as Project_Description.
+    data["Project Description"] = clean_series(
+        data["Project_Description"],
+        "Unassigned",
+    )
 
     data["Month"] = data["Date"].dt.month
     data["Month Name"] = data["Date"].dt.strftime("%b")
