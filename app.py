@@ -142,6 +142,27 @@ def normalize_match_cabin(value):
 
 
 
+def normalize_project_id(value):
+    """Keep numeric project IDs and merge SP1 prefix/suffix variants."""
+    value = clean_key(value)
+    if not value:
+        return ""
+    value = re.sub(r"\s+", " ", value).strip()
+    prefixed = re.match(
+        r"^SP1[\s_-]*([0-9]+(?:\.[0-9]+)+)(?:[\s_-]*SP1)?$",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if prefixed:
+        return prefixed.group(1)
+    numeric = re.match(
+        r"^([0-9]+(?:\.[0-9]+)+)(?:[\s_-]*SP1)?$",
+        value,
+        flags=re.IGNORECASE,
+    )
+    return numeric.group(1) if numeric else ""
+
+
 def target_for_year(year, base_value):
     """
     Calculate the annual emissions-per-FTE target.
@@ -194,6 +215,11 @@ def load_data(workbook_mtime):
         sheet_name="FTE Data",
         engine="openpyxl",
     )
+    traveler_manifest = pd.read_excel(
+        EXCEL_FILE,
+        sheet_name="Traveler Manifest",
+        engine="openpyxl",
+    )
 
     required = {
         "Traveler",
@@ -203,7 +229,6 @@ def load_data(workbook_mtime):
         "ArrivalAirport",
         "Class",
         "Project_ID_Code",
-        "Project_Description",
         "Flight_Type",
         "Team",
         "Distance_km",
@@ -285,17 +310,40 @@ def load_data(workbook_mtime):
     )
 
     # Project codes are now native fields in the Excel integrated dataset.
-    data["Project Number"] = clean_series(
-        data["Project_ID_Code"],
-        "Unassigned",
+    data["Project Number"] = (
+        data["Project_ID_Code"]
+        .map(normalize_project_id)
+        .replace("", "Unassigned")
     )
-    # Project description is the travel reason carried from Traveler Manifest
-    # column C into All Integrated Data.Project_Description.
-    data["Project Description"] = clean_series(
-        data["Project_Description"],
-        "Unassigned",
-    )
+    # Use the integrated description when available. Otherwise derive the
+    # travel reason from Traveler Manifest column C using the source row.
+    if "Project_Description" in data.columns:
+        description = data["Project_Description"].copy()
+    else:
+        description = pd.Series("", index=data.index, dtype="object")
 
+    reason_column = "Custom UD52 Reason For Travel"
+    if (
+        reason_column in traveler_manifest.columns
+        and "Calc_or_Source_Row" in data.columns
+    ):
+        reasons = traveler_manifest[reason_column]
+        source_rows = pd.to_numeric(
+            data["Calc_or_Source_Row"],
+            errors="coerce",
+        )
+        for row_index, source_row in source_rows.items():
+            if pd.isna(source_row):
+                continue
+            manifest_index = int(source_row) - 2
+            if 0 <= manifest_index < len(reasons):
+                if not clean_key(description.loc[row_index]):
+                    description.loc[row_index] = reasons.iloc[manifest_index]
+
+    data["Project Description"] = clean_series(
+        description,
+        "Unassigned",
+    )
     data["Month"] = data["Date"].dt.month
     data["Month Name"] = data["Date"].dt.strftime("%b")
 
@@ -707,7 +755,12 @@ project_metrics[2].metric(
 )
 
 if len(project_summary):
-    project_chart = project_summary.head(15).sort_values("Emissions")
+    project_chart = (
+        project_summary
+        .nlargest(15, "Emissions")
+        .sort_values("Emissions", ascending=False)
+    )
+    project_order = project_chart["Project Number"].tolist()
     project_figure = px.bar(
         project_chart,
         x="Emissions",
@@ -716,6 +769,12 @@ if len(project_summary):
         text="Emissions",
         custom_data=["Project Description", "Flights", "Distance"],
         title=f"Highest emitting projects in {selected_year}",
+        category_orders={"Project Number": project_order},
+    )
+    project_figure.update_yaxes(
+        categoryorder="array",
+        categoryarray=project_order,
+        autorange="reversed",
     )
     project_figure.update_traces(
         texttemplate="%{text:.2f}",
@@ -1015,11 +1074,22 @@ cabin_colors = {
     "first": "#8259C8",
 }
 
+team_cabin_plot = team_cabin_emissions.copy()
+team_cabin_plot["Cabin display"] = (
+    team_cabin_plot["Cabin"]
+    .fillna("")
+    .astype(str)
+    .str.strip()
+    .replace({"": "Blank"})
+)
+team_cabin_order = ["economy", "premiumeconomy", "business", "first", "Blank"]
+team_cabin_colors = {**cabin_colors, "Blank": "#3FAE9A"}
+
 team_cabin_figure = px.bar(
-    team_cabin_emissions,
+    team_cabin_plot,
     x="Team",
     y="Emissions",
-    color="Cabin",
+    color="Cabin display",
     title=(
         "Cabin class contribution within teams "
         f"({selected_year})"
@@ -1027,13 +1097,13 @@ team_cabin_figure = px.bar(
     labels={
         "Team": "Teams",
         "Emissions": "Emissions (tCO₂e)",
-        "Cabin": "Cabin class",
+        "Cabin display": "Cabin class",
     },
     category_orders={
         "Team": stacked_team_order,
-        "Cabin": cabin_order,
+        "Cabin display": team_cabin_order,
     },
-    color_discrete_map=cabin_colors,
+    color_discrete_map=team_cabin_colors,
     custom_data=[
         "Flights",
     ],
