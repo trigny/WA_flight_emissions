@@ -18,7 +18,7 @@ st.set_page_config(
 # Repository file
 # -------------------------------------------------------------------
 BASE = Path(__file__).resolve().parent
-EXCEL_FILE = BASE / "Flight Emissions Dashboard v2.xlsx"
+EXCEL_FILE = BASE / "Flight Emissions Dashboard v3.xlsx"
 
 # -------------------------------------------------------------------
 # Target pathway
