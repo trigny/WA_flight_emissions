@@ -4,7 +4,7 @@
 ## Files
 
 - `app.py`: Streamlit dashboard
-- 3 main excel files 
+- 1 excel file: Flight Emission Dashboard v3
 - `requirements.txt`: Python dependencies
 
 ## How the app uses the workbook
@@ -36,8 +36,8 @@ streamlit run app.py
 ```
 
 ## Update the dashboard data
-
-...
+- get the travelers manifest data from Goodwings which is sent to us monthly. this should include project ids inside already.
+- paste it at the bottom of the travelers manifest tab in the excel workbook. Make sure all columns are the same
 
 ## Deploy online
 
