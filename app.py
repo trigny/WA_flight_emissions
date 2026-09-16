@@ -732,13 +732,29 @@ st.subheader(f"Emissions by project number ({selected_year})")
 assigned = selected[selected["Project Number"].ne("Unassigned")]
 unassigned = selected[selected["Project Number"].eq("Unassigned")]
 project_summary = (
-    assigned.groupby(["Project Number", "Project Description"], as_index=False)
+    assigned.groupby("Project Number", as_index=False)
     .agg(
+        **{
+            "Project Description": (
+                "Project Description",
+                lambda values: " / ".join(
+                    sorted(
+                        {
+                            str(value).strip()
+                            for value in values
+                            if str(value).strip()
+                            and str(value).strip() != "Unassigned"
+                        }
+                    )
+                ),
+            )
+        },
         Flights=("Emissions", "size"),
         Emissions=("Emissions", "sum"),
         Distance=("Distance", "sum"),
     )
-    .sort_values("Emissions", ascending=False)
+    .sort_values("Emissions", ascending=False, kind="stable")
+    .reset_index(drop=True)
 )
 
 project_metrics = st.columns(3)
@@ -755,10 +771,14 @@ project_metrics[2].metric(
 )
 
 if len(project_summary):
-    project_chart = (
-        project_summary
-        .nlargest(15, "Emissions")
-        .sort_values("Emissions", ascending=False)
+    # Plotly draws the first horizontal category at the bottom. Take the top
+    # 15 in descending order, then reverse only the plotting frame so the
+    # largest value appears at the top and values decrease down the chart.
+    project_top15 = project_summary.nlargest(15, "Emissions").copy()
+    project_chart = project_top15.sort_values(
+        "Emissions",
+        ascending=True,
+        kind="stable",
     )
     project_order = project_chart["Project Number"].tolist()
     project_figure = px.bar(
@@ -774,7 +794,6 @@ if len(project_summary):
     project_figure.update_yaxes(
         categoryorder="array",
         categoryarray=project_order,
-        autorange="reversed",
     )
     project_figure.update_traces(
         texttemplate="%{text:.2f}",
@@ -1286,34 +1305,30 @@ st.subheader("Detailed summaries")
 # Prepare project summary
 # -------------------------------------------------------------------
 project_detail_summary = (
-    selected[
-        selected["Project Number"] != "Unassigned"
-    ]
-    .groupby(
-        [
-            "Project Number",
-            "Project Description",
-        ],
-        as_index=False,
-    )
+    selected[selected["Project Number"] != "Unassigned"]
+    .groupby("Project Number", as_index=False)
     .agg(
-        Flight_records=(
-            "Emissions",
-            "size",
-        ),
-        Emissions_tCO2e=(
-            "Emissions",
-            "sum",
-        ),
-        Distance_km=(
-            "Distance",
-            "sum",
-        ),
+        **{
+            "Project Description": (
+                "Project Description",
+                lambda values: " / ".join(
+                    sorted(
+                        {
+                            str(value).strip()
+                            for value in values
+                            if str(value).strip()
+                            and str(value).strip() != "Unassigned"
+                        }
+                    )
+                ),
+            )
+        },
+        Flight_records=("Emissions", "size"),
+        Emissions_tCO2e=("Emissions", "sum"),
+        Distance_km=("Distance", "sum"),
     )
-    .sort_values(
-        "Emissions_tCO2e",
-        ascending=False,
-    )
+    .sort_values("Emissions_tCO2e", ascending=False, kind="stable")
+    .reset_index(drop=True)
 )
 
 total_assigned_project_emissions = (
